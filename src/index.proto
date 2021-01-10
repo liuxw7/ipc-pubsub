@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package ipc_pubsub;
+
+message NotifyMessage {
+  uint64 source = 1;
+
+  // For small messages ( < 1k) it makes more sense to just include the message
+  bytes inline_payload = 2;
+
+  // shared memory segment containing the payload (if left empty then payload is
+  // in the inline_payload field)
+  string segment_payload = 3;
+};
+
+message Node {
+  string name = 1;
+  uint64 id = 2;
+  string notify = 3; // name of OS queue to send metadata / messages to
+};
+
+message Topic {
+  string name = 1;
+
+  // if the topic contains protobuf then this will be the type infor otherwise
+  // a mimetype
+  string mime = 2;
+
+  // node ids of topic users
+  repeated uint64 publishers = 3;
+  repeated uint64 subscribers = 4
+};
+
+message Index {
+  repeated Node nodes = 1;
+  repeated Topic topics = 2;
+}
