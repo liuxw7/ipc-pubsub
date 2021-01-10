@@ -1,0 +1,6 @@
+build --cxxopt=-std=c++17
+build --cxxopt=-Wall
+build --cxxopt=-Weverything
+build --cxxopt=-Wno-c++98-compat
+build --cxxopt=-Wno-zero-length-array
+build --cxxopt=-Wno-padded
