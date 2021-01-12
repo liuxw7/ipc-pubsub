@@ -28,7 +28,7 @@ message Topic {
 
   // node ids of topic users
   repeated uint64 publishers = 3;
-  repeated uint64 subscribers = 4
+  repeated uint64 subscribers = 4;
 };
 
 message Index {
