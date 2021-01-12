@@ -1,7 +1,7 @@
 build --incompatible_strict_action_env
 build --disk_cache=/tmp/bazel
 
-build --cxxopt=-std=c++17
+build --cxxopt=-std=c++20
 build --cxxopt=-Wall
 build --cxxopt=-Weverything
 build --cxxopt=-Wno-c++98-compat
@@ -10,6 +10,5 @@ build --cxxopt=-Wno-padded
 
 # so that protobuf doesn't trigger warnings
 build --cxxopt=-Wno-c++98-compat-pedantic
-build --cxxopt=-Wno-suggest-destructor-override
 build --cxxopt=-Wno-missing-variable-declarations
 build --cxxopt=-Wno-sign-conversion

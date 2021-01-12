@@ -14,12 +14,12 @@
 
 #include "protos/index.pb.h"
 
-const int QUEUE_PERMS = static_cast<int>(0644);
+const int QUEUE_PERMS = static_cast<int>(0744);
 const char MAGIC[8] = "MAGICPS";
 const char SHMEM_NAME[] = "/ipc_pub_sub";
 
-const int QUEUE_MAXMSG = 100;
-const int QUEUE_MSGSIZE = 32768;
+const int QUEUE_MAXMSG = 10;
+const int QUEUE_MSGSIZE = 4096;
 const mq_attr QUEUE_ATTR_INITIALIZER{
     .mq_flags = 0, .mq_maxmsg = QUEUE_MAXMSG, .mq_msgsize = QUEUE_MSGSIZE, .mq_curmsgs = 0};
 
@@ -118,11 +118,17 @@ static bool unRegisterNode(int fd, uint64_t nodeId) {
     });
 }
 
+char intToHex[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                     '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+
 std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const char* nodeName) {
     std::random_device rd;
     std::mt19937_64 rng(rd());
     const uint64_t nodeId = rng();
-    const std::string queueName = "/" + std::to_string(nodeId);
+    char queueName[10] = "/00000000";
+    for (uint8_t i = 0; i < 8; ++i) {
+        queueName[i + 1] = intToHex[(nodeId >> ((15 - i) * 4)) & 0xf];
+    }
 
     // create meta that stores actual connection
 
@@ -139,7 +145,8 @@ std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const ch
     flock(fd, LOCK_EX);
     OnReturn onRet([fd]() { flock(fd, LOCK_UN); });
     char magic[8];
-    if (pread(fd, magic, 8, 0) != 8) {
+    if (pread(fd, magic, 8, 0) == -1) {
+        std::cerr << "Failed to read from shm: " << strerror(errno) << std::endl;
         return nullptr;
     }
 
@@ -154,17 +161,18 @@ std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const ch
     }
 
     struct mq_attr attr = QUEUE_ATTR_INITIALIZER;
-    mqd_t mq = mq_open(queueName.c_str(), O_CREAT | O_RDWR, QUEUE_PERMS, &attr);
+    mqd_t mq = mq_open(queueName, O_CREAT | O_RDWR, QUEUE_PERMS, &attr);
     if (mq < 0) {
-        std::cerr << "Error, cannot open the queue: " << strerror(errno) << std::endl;
+        std::cerr << "Error, cannot open the queue: " << strerror(errno) << " (" << errno << ")"
+                  << std::endl;
         shm_unlink(ipcName);
         return nullptr;
     }
 
-    if (!registerNode(fd, nodeName, nodeId, queueName.c_str())) {
+    if (!registerNode(fd, nodeName, nodeId, queueName)) {
         return nullptr;
     }
-    return std::make_shared<IPCMessenger>(ipcName, fd, queueName.c_str(), nodeName, nodeId, mq);
+    return std::make_shared<IPCMessenger>(ipcName, fd, queueName, nodeName, nodeId, mq);
 }
 
 void IPCMessenger::onNotify(const char* data, int64_t len) {
