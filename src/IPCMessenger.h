@@ -19,7 +19,7 @@ class IPCMessenger {
     static std::shared_ptr<IPCMessenger> Create(const char* ipcName, const char* nodeName);
 
     bool Subscribe(std::string_view topic, std::string_view mime, CallbackT cb);
-    bool Publish(std::string_view topic, std::string mime, const uint8_t* data, size_t len);
+    bool Publish(std::string_view topic, std::string_view mime, const uint8_t* data, size_t len);
 
    private:
     void onNotify(const char* data, int64_t len);

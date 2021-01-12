@@ -60,9 +60,20 @@ static bool updateIndex(int fd, std::function<bool(ipc_pubsub::Index* update)> c
     ipc_pubsub::Index index;
     lseek(fd, 16, SEEK_SET);
     index.ParseFromFileDescriptor(fd);
+    std::cerr << index.DebugString() << std::endl;
 
     // allow callback to update
-    return cb(&index);
+    if (!cb(&index)) {
+        std::cerr << "Failed to update index" << std::endl;
+        return false;
+    }
+
+    // write back
+    lseek(fd, 16, SEEK_SET);
+    index.SerializeToFileDescriptor(fd);
+
+    std::cerr << index.DebugString() << std::endl;
+    return true;
 }
 
 static bool registerNode(int fd, const char* nodeName, uint64_t nodeId, const char* queueName) {
@@ -152,6 +163,7 @@ std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const ch
 
     if (strncmp(magic, MAGIC, 8) != 0) {
         // not initialized resize and initialize
+        std::cerr << "Initializing shared mem segment " << std::endl;
         ipc_pubsub::Index index;
         if (ftruncate(fd, 8 + 8 + index.ByteSizeLong()) == -1) {
             std::cerr << "Failed to resize: " << strerror(errno) << std::endl;
@@ -161,7 +173,8 @@ std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const ch
     }
 
     struct mq_attr attr = QUEUE_ATTR_INITIALIZER;
-    mqd_t mq = mq_open(queueName, O_CREAT | O_RDWR, QUEUE_PERMS, &attr);
+    std::cerr << "Input Queue: " << queueName << std::endl;
+    mqd_t mq = mq_open(queueName, O_CREAT | O_RDONLY, QUEUE_PERMS, &attr);
     if (mq < 0) {
         std::cerr << "Error, cannot open the queue: " << strerror(errno) << " (" << errno << ")"
                   << std::endl;
@@ -181,6 +194,7 @@ void IPCMessenger::onNotify(const char* data, int64_t len) {
 }
 
 IPCMessenger::~IPCMessenger() {
+    unRegisterNode(mShmFd, mNodeId);
     mq_close(mNotify);
     mq_unlink(mNotifyName.c_str());
     shm_unlink(mIpcName.c_str());
@@ -201,7 +215,9 @@ IPCMessenger::IPCMessenger(const char* ipcName, int shmFd, const char* notifyNam
         ipc_pubsub::NotifyMessage notifyMsg;
         while (mKeepGoing) {
             memset(buffer, 0x00, sizeof(buffer));
+            std::cerr << "Waiting on " << mNotifyName << std::endl;
             int64_t bytesRead = mq_receive(mNotify, buffer, QUEUE_MSGSIZE, &prio);
+            std::cerr << "Got " << bytesRead << std::endl;
             if (bytesRead >= 0) {
                 onNotify(buffer, bytesRead);
             }
@@ -243,12 +259,21 @@ bool IPCMessenger::Subscribe(std::string_view topicName, std::string_view mime,
     }
 }
 
-bool IPCMessenger::Publish(std::string_view topicName, std::string mime, const uint8_t* data,
+static void FillPayload(const uint8_t* data, size_t len, ipc_pubsub::NotifyMessage* msg) {
+    if (len + 128 < QUEUE_MSGSIZE) {
+        std::cerr << "Inlining" << std::endl;
+        msg->set_inline_payload(data, len);
+    } else {
+        std::cerr << "Segment not yet implemented" << std::endl;
+    }
+}
+
+bool IPCMessenger::Publish(std::string_view topicName, std::string_view mime, const uint8_t* data,
                            size_t len) {
     // add ourselves to the list of publishers, creating as necessary in the registry
     // TODO actually make shared mem and set data
 
-    return updateIndex(mShmFd, [this, topicName, mime](ipc_pubsub::Index* index) {
+    return updateIndex(mShmFd, [this, topicName, mime, len, data](ipc_pubsub::Index* index) {
         // insert topic if it doesn't exist
         auto topicIt =
             std::find_if(index->mutable_topics()->begin(), index->mutable_topics()->end(),
@@ -272,7 +297,8 @@ bool IPCMessenger::Publish(std::string_view topicName, std::string mime, const u
         for (const auto& node : index->nodes()) {
             if (mQueueCache.count(node.id()) == 0) {
                 struct mq_attr attr = QUEUE_ATTR_INITIALIZER;
-                mqd_t mq = mq_open(node.notify().c_str(), O_CREAT | O_RDWR, QUEUE_PERMS, &attr);
+                std::cerr << "Opening: " << node.id() << " -> " << node.notify() << std::endl;
+                mqd_t mq = mq_open(node.notify().c_str(), O_CREAT | O_WRONLY, QUEUE_PERMS, &attr);
                 if (mq < 0) {
                     std::cerr << "Error, cannot open the queue: " << strerror(errno) << std::endl;
                 } else {
@@ -283,11 +309,17 @@ bool IPCMessenger::Publish(std::string_view topicName, std::string mime, const u
 
         // notify subscribers
         ipc_pubsub::NotifyMessage notifyMsg;
+        notifyMsg.set_source(mNodeId);
+        FillPayload(data, len, &notifyMsg);
         std::string notificationData;
-        notifyMsg.SerializeToString(&notificationData);
+        if (!notifyMsg.SerializeToString(&notificationData)) {
+            std::cerr << "Failed to serialize" << std::endl;
+            return false;
+        }
 
         for (const uint64_t sub : topic->subscribers()) {
             // notify subscribers
+            std::cerr << "must notify: " << sub << std::endl;
             if (auto qit = mQueueCache.find(sub); qit != mQueueCache.end()) {
                 int err =
                     mq_send(qit->second, notificationData.c_str(), notificationData.size(), 0);
