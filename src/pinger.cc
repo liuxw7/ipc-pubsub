@@ -20,7 +20,7 @@ int main() {
         std::cout << " recvd" << std::endl;
     });
     node->Announce("/ping", "text/plain");
-    while (true) {
+    for (size_t i = 0; i < 2; ++i) {
         std::string msg = "ping";
         node->Publish("/ping", reinterpret_cast<const uint8_t*>(msg.c_str()), msg.size() + 1);
         std::cout << "ping sent" << std::endl;

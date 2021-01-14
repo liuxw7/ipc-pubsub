@@ -32,7 +32,7 @@ class IPCMessenger : std::enable_shared_from_this<IPCMessenger> {
    private:
     void OnNotify();
 
-    bool mKeepGoing = false;
+    std::atomic_bool mKeepGoing = false;
     int mShmFd;
 
     // Data structure for current subscriptions and callback thread

@@ -12,9 +12,10 @@ message Node {
   string name = 1;
   uint64 id = 2;
   string notify = 3; // name of OS semaphore to up when sending a message
+  int32 pid = 4;     // used to clean up dead nodes
 
   // Messages that need to be processed
-  repeated InFlight in_flight = 4;
+  repeated InFlight in_flight = 10;
 };
 
 message Topic {
