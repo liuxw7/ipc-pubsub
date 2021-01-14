@@ -1,38 +1,57 @@
 #pragma once
+#include <semaphore.h>
+
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
 #include <thread>
 
-typedef int mqd_t;
+#include "Dispatcher.h"
 
-class IPCMessenger {
+class IPCMessenger : std::enable_shared_from_this<IPCMessenger> {
    public:
     using CallbackT = std::function<void(const uint8_t* data, size_t len)>;
 
     // don't call directly, use Create
     IPCMessenger(const char* ipcName, int shmFd, const char* notifyName, const char* nodeName,
-                 uint64_t nodeId, mqd_t notify);
+                 uint64_t nodeId, sem_t* notify);
     ~IPCMessenger();
 
     static std::shared_ptr<IPCMessenger> Create(const char* ipcName, const char* nodeName);
 
-    bool Subscribe(std::string_view topic, std::string_view mime, CallbackT cb);
-    bool Publish(std::string_view topic, std::string_view mime, const uint8_t* data, size_t len);
+    bool Subscribe(std::string_view topic, CallbackT cb);
+    bool Publish(std::string_view topic, const uint8_t* data, size_t len);
+    bool Publish(std::string_view topic, std::shared_ptr<ShmBuffer> buff);
+    bool Announce(std::string_view topic, std::string_view mime);
+
+    // Don't call this unless you know what you are doing
+    void Shutdown();
 
    private:
-    void onNotify(const char* data, int64_t len);
+    void OnNotify();
 
     bool mKeepGoing = false;
     int mShmFd;
-    std::unordered_map<std::string, CallbackT> mSubscriptions;
-    std::unordered_map<uint64_t, int> mQueueCache;
+
+    // Data structure for current subscriptions and callback thread
+    Dispatcher mDispatcher;
+
+    // Used to notify other nodes
+    std::unordered_map<uint64_t, sem_t*> mSemCache;
+
+    // metadata IPC
     std::string mIpcName;
-    std::string mNotifyName;
+
     std::string mNodeName;
     uint64_t mNodeId;
-    int mNotify;
 
+    // Wait for semaphore then reload / dispatch
+    std::string mNotifyName;
+    sem_t* mNotify;
     std::thread mNotifyThread;
+
+    // Need to keep shared memory alive long enough for it to get picked up by receivers
+    std::deque<std::shared_ptr<ShmBuffer>> mInFlight;
 };

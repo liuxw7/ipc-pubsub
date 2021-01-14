@@ -1,7 +1,7 @@
 #include "IPCMessenger.h"
 
 #include <fcntl.h> /* For O_* constants */
-#include <mqueue.h>
+#include <semaphore.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h> /* For mode constants */
@@ -10,18 +10,13 @@
 
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <random>
+#include <set>
 
+#include "ShmBuffer.h"
+#include "Utils.h"
 #include "protos/index.pb.h"
-
-const int QUEUE_PERMS = static_cast<int>(0744);
-const char MAGIC[8] = "MAGICPS";
-const char SHMEM_NAME[] = "/ipc_pub_sub";
-
-const int QUEUE_MAXMSG = 10;
-const int QUEUE_MSGSIZE = 4096;
-const mq_attr QUEUE_ATTR_INITIALIZER{
-    .mq_flags = 0, .mq_maxmsg = QUEUE_MAXMSG, .mq_msgsize = QUEUE_MSGSIZE, .mq_curmsgs = 0};
 
 struct OnReturn {
     OnReturn(std::function<void()> cleanup) : mCleanup(cleanup) {}
@@ -29,120 +24,35 @@ struct OnReturn {
     std::function<void()> mCleanup;
 };
 
-struct Node {
-    size_t next = 0;  // offset from the begginning of shm in bytes, 0 means null / no next
-    size_t prev = 0;
-
-    // Data in nodes *isn't* locked, so that we don't have to keep track of number of readers.
-    // Instead we will optimistically read hash and data then check the data. If the data isn't
-    // valid (stored hash != hash(data)) we assume that the message was popped off the queue before
-    // the thread had a chance to read it, and then read the next message.
-    size_t seq = 0;
-    size_t hash = 0;  // sdbm algorithm of data string
-    size_t len = 0;
-    uint8_t data[0];
-};
-
-// Index Format
-
-// ---------------------------------------------------
-// name     | bytes | type    | Description
-// ---------------------------------------------------
-// MAGIC    |  8    | char[]  |
-// VERSION  |  8    | UINT64  |
-// INDEX    |  ?    | char[]  | Serialized protobuf
-
-static bool updateIndex(int fd, std::function<bool(ipc_pubsub::Index* update)> cb) {
-    flock(fd, LOCK_EX);
-    OnReturn onRet([fd]() { flock(fd, LOCK_UN); });
-
-    // read index
-    ipc_pubsub::Index index;
-    lseek(fd, 16, SEEK_SET);
-    index.ParseFromFileDescriptor(fd);
-    std::cerr << index.DebugString() << std::endl;
-
-    // allow callback to update
-    if (!cb(&index)) {
-        std::cerr << "Failed to update index" << std::endl;
-        return false;
-    }
-
-    // write back
-    lseek(fd, 16, SEEK_SET);
-    index.SerializeToFileDescriptor(fd);
-
-    std::cerr << index.DebugString() << std::endl;
-    return true;
-}
-
-static bool registerNode(int fd, const char* nodeName, uint64_t nodeId, const char* queueName) {
-    return updateIndex(fd, [nodeName, nodeId, queueName](ipc_pubsub::Index* update) {
-        auto nodes = update->mutable_nodes();
-        for (const auto& node : *nodes) {
-            if (node.id() == nodeId) {
-                // already registered
-                std::cerr << nodeId << " with matching id already registered!" << std::endl;
-                return false;
-            }
-        }
-
-        auto newNode = nodes->Add();
-        newNode->set_name(nodeName);
-        newNode->set_id(nodeId);
-        newNode->set_notify(queueName);
-        return true;
-    });
-}
-
-static bool unRegisterNode(int fd, uint64_t nodeId) {
-    return updateIndex(fd, [nodeId](ipc_pubsub::Index* update) {
-        // copy then delete old nodes
-        const auto oldNodes = update->nodes();
-        update->mutable_nodes()->Clear();
-        for (const auto& node : oldNodes) {
-            if (node.id() != nodeId) {
-                // doesn't match, so copy
-                *update->mutable_nodes()->Add() = node;
-            }
-        }
-
-        for (auto& topic : *update->mutable_topics()) {
-            // copy then delete old nodes from publishers
-            const auto oldPublishers = topic.publishers();
-            const auto oldSubscribers = topic.subscribers();
-            topic.mutable_publishers()->Clear();
-            topic.mutable_subscribers()->Clear();
-            for (const uint64_t id : oldPublishers) {
-                if (id != nodeId) {
-                    *topic.mutable_publishers()->Add() = id;
-                }
-            }
-
-            for (const uint64_t id : oldSubscribers) {
-                if (id != nodeId) {
-                    *topic.mutable_subscribers()->Add() = id;
-                }
-            }
-        }
-        return true;
-    });
-}
-
-char intToHex[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
-                     '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+// template <typename T>
+// struct WeakCompare {
+//    bool operator()(const std::weak_ptr<T>& lhs, const std::weak_ptr<T>& rhs) const {
+//        return lhs.owner_before(rhs);
+//    }
+//};
+//
+// struct AllMessengers {
+//    ~AllMessengers() {
+//        std::cerr << "Cleaning up" << std::endl;
+//        std::lock_guard<std::mutex> lk(mtx);
+//        for (std::weak_ptr<IPCMessenger> self : messengers) {
+//            std::shared_ptr<IPCMessenger> locked = self.lock();
+//            if (locked) {
+//                locked->Shutdown();
+//            }
+//        }
+//    }
+//
+//    std::mutex mtx;
+//    std::set<std::weak_ptr<IPCMessenger>, WeakCompare<IPCMessenger>> messengers;
+//} gAllMessengers;
 
 std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const char* nodeName) {
     std::random_device rd;
     std::mt19937_64 rng(rd());
     const uint64_t nodeId = rng();
-    char queueName[10] = "/00000000";
-    for (uint8_t i = 0; i < 8; ++i) {
-        queueName[i + 1] = intToHex[(nodeId >> ((15 - i) * 4)) & 0xf];
-    }
-
-    // create meta that stores actual connection
-
+    char semName[18] = "/0000000000000000";
+    ToHexString(nodeId, &semName[1]);
     // Attempt to create or open
     int fd = shm_open(ipcName, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
     if (fd == -1) {
@@ -150,189 +60,248 @@ std::shared_ptr<IPCMessenger> IPCMessenger::Create(const char* ipcName, const ch
         return nullptr;
     }
 
-    // check if magic is correct, need to lock because two processes might read
-    // magic as missing at the same time then race to initialize, after this we
-    // only used the mutex in Meta to control races
-    flock(fd, LOCK_EX);
-    OnReturn onRet([fd]() { flock(fd, LOCK_UN); });
-    char magic[8];
-    if (pread(fd, magic, 8, 0) == -1) {
-        std::cerr << "Failed to read from shm: " << strerror(errno) << std::endl;
-        return nullptr;
-    }
-
-    if (strncmp(magic, MAGIC, 8) != 0) {
-        // not initialized resize and initialize
-        std::cerr << "Initializing shared mem segment " << std::endl;
-        ipc_pubsub::Index index;
-        if (ftruncate(fd, 8 + 8 + index.ByteSizeLong()) == -1) {
-            std::cerr << "Failed to resize: " << strerror(errno) << std::endl;
-            shm_unlink(ipcName);
-            return nullptr;
-        }
-    }
-
-    struct mq_attr attr = QUEUE_ATTR_INITIALIZER;
-    std::cerr << "Input Queue: " << queueName << std::endl;
-    mqd_t mq = mq_open(queueName, O_CREAT | O_RDONLY, QUEUE_PERMS, &attr);
-    if (mq < 0) {
-        std::cerr << "Error, cannot open the queue: " << strerror(errno) << " (" << errno << ")"
+    std::cerr << "Input Sem: " << semName << std::endl;
+    sem_t* sem = sem_open(semName, O_CREAT | O_EXCL, 0744, 0);
+    if (sem == SEM_FAILED) {
+        std::cerr << "Error, cannot open the sem: " << strerror(errno) << " (" << errno << ")"
                   << std::endl;
-        shm_unlink(ipcName);
+        close(fd);
+        // shm_unlink(ipcName); TODO unlink when we are last one, probably at exit
         return nullptr;
     }
 
-    if (!registerNode(fd, nodeName, nodeId, queueName)) {
-        return nullptr;
+    return std::make_shared<IPCMessenger>(ipcName, fd, semName, nodeName, nodeId, sem);
+}
+
+void IPCMessenger::OnNotify() {
+    // Check current messages
+    ipc_pubsub::Index index;
+    flock(mShmFd, LOCK_EX);
+    lseek(mShmFd, 0, SEEK_SET);
+    index.ParseFromFileDescriptor(mShmFd);
+
+    // find current node
+    auto nodeIt = std::find_if(index.mutable_nodes()->begin(), index.mutable_nodes()->end(),
+                               [this](const auto& node) { return node.id() == mNodeId; });
+
+    // copy then clean inflight
+    if (nodeIt != index.mutable_nodes()->end()) {
+        for (const ipc_pubsub::InFlight& msg : nodeIt->in_flight()) {
+            mDispatcher.Push(msg.topic(), msg.payload_name());
+        }
+        nodeIt->mutable_in_flight()->Clear();
     }
-    return std::make_shared<IPCMessenger>(ipcName, fd, queueName, nodeName, nodeId, mq);
+
+    flock(mShmFd, LOCK_UN);
 }
 
-void IPCMessenger::onNotify(const char* data, int64_t len) {
-    ipc_pubsub::NotifyMessage msg;
-    msg.ParseFromArray(data, static_cast<int>(len));
+void IPCMessenger::Shutdown() {
+    //// called either by deconstructor, or if shutdown is happening by the global atexit handler
+    //{
+    //    std::lock_guard<std::mutex> lk(gAllMessengers.mtx);
+    //    gAllMessengers.messengers.erase(weak_from_this());
+    //}
+
+    // Remove outselves from the segment
+    flock(mShmFd, LOCK_EX);
+    lseek(mShmFd, 0, SEEK_SET);
+
+    ipc_pubsub::Index index;
+    index.ParseFromFileDescriptor(mShmFd);
+
+    // remove ourselves from nodes
+    std::remove_if(index.mutable_nodes()->begin(), index.mutable_nodes()->end(),
+                   [this](const auto& node) { return node.id() == mNodeId; });
+
+    // remove ourselves from publishers/subscribers
+    for (auto& topic : *index.mutable_topics()) {
+        std::remove_if(topic.mutable_publishers()->begin(), topic.mutable_publishers()->end(),
+                       [this](uint64_t id) { return id == mNodeId; });
+        std::remove_if(topic.mutable_subscribers()->begin(), topic.mutable_subscribers()->end(),
+                       [this](uint64_t id) { return id == mNodeId; });
+    }
+
+    // write back
+    ftruncate(mShmFd, 0);
+    index.SerializeToFileDescriptor(mShmFd);
+    flock(mShmFd, LOCK_UN);
+
+    sem_close(mNotify);
+    sem_unlink(mNotifyName.c_str());
+    // shm_unlink(mIpcName.c_str()); // TODO unlink when we are last one out
 }
 
-IPCMessenger::~IPCMessenger() {
-    unRegisterNode(mShmFd, mNodeId);
-    mq_close(mNotify);
-    mq_unlink(mNotifyName.c_str());
-    shm_unlink(mIpcName.c_str());
-}
+IPCMessenger::~IPCMessenger() { Shutdown(); }
 
 IPCMessenger::IPCMessenger(const char* ipcName, int shmFd, const char* notifyName,
-                           const char* nodeName, uint64_t nodeId, mqd_t notify)
+                           const char* nodeName, uint64_t nodeId, sem_t* notify)
     : mKeepGoing(true),
       mShmFd(shmFd),
       mIpcName(ipcName),
-      mNotifyName(notifyName),
       mNodeName(nodeName),
       mNodeId(nodeId),
+      mNotifyName(notifyName),
       mNotify(notify) {
+    //{
+    //    std::lock_guard<std::mutex> lk(gAllMessengers.mtx);
+    //    gAllMessengers.messengers.emplace(weak_from_this());
+    //}
+
+    ipc_pubsub::Index index;
+    // Write message to end of shared memory segment
+    flock(mShmFd, LOCK_EX);
+    lseek(mShmFd, 0, SEEK_SET);
+
+    index.ParseFromFileDescriptor(mShmFd);
+    auto newNode = index.mutable_nodes()->Add();
+    newNode->set_name(mNodeName);
+    newNode->set_id(mNodeId);
+    newNode->set_notify(mNodeName);
+
+    ftruncate(mShmFd, 0);
+    index.SerializeToFileDescriptor(mShmFd);
+    flock(mShmFd, LOCK_UN);
+
+    // read from semaphor until we're done
     mNotifyThread = std::thread([this]() {
-        unsigned int prio;
-        char buffer[QUEUE_MSGSIZE + 1];
-        ipc_pubsub::NotifyMessage notifyMsg;
         while (mKeepGoing) {
-            memset(buffer, 0x00, sizeof(buffer));
             std::cerr << "Waiting on " << mNotifyName << std::endl;
-            int64_t bytesRead = mq_receive(mNotify, buffer, QUEUE_MSGSIZE, &prio);
-            std::cerr << "Got " << bytesRead << std::endl;
-            if (bytesRead >= 0) {
-                onNotify(buffer, bytesRead);
-            }
+            sem_wait(mNotify);
+            OnNotify();
         }
     });
 }
 
-bool IPCMessenger::Subscribe(std::string_view topicName, std::string_view mime,
-                             std::function<void(const uint8_t* data, size_t len)> cb) {
-    // add ourselves to the list of subscribers, creating as necessary in the registry
-    bool ret = updateIndex(mShmFd, [this, topicName, mime](ipc_pubsub::Index* index) {
-        // insert topic if it doesn't exist
-        auto topicIt =
-            std::find_if(index->mutable_topics()->begin(), index->mutable_topics()->end(),
-                         [topicName](const auto& topic) { return topic.name() == topicName; });
-        ipc_pubsub::Topic* topic = nullptr;
-        if (topicIt == index->mutable_topics()->end()) {
-            topic = index->mutable_topics()->Add();
-            topic->set_name(topicName.data(), topicName.size());
+bool IPCMessenger::Subscribe(std::string_view topicName, CallbackT cb) {
+    // write subscription to meta
+    ipc_pubsub::Index index;
+    flock(mShmFd, LOCK_EX);
+    lseek(mShmFd, 0, SEEK_SET);
+
+    index.ParseFromFileDescriptor(mShmFd);
+
+    ipc_pubsub::Topic* topic = nullptr;
+    auto topicIt =
+        std::find_if(index.mutable_topics()->begin(), index.mutable_topics()->end(),
+                     [topicName](const auto& topicMsg) { return topicMsg.name() == topicName; });
+
+    if (topicIt == index.mutable_topics()->end()) {
+        // add it
+        topic = index.mutable_topics()->Add();
+        topic->set_name(topicName.data(), topicName.size());
+    } else {
+        topic = &*topicIt;
+    }
+
+    if (std::count(topic->subscribers().begin(), topic->subscribers().end(), mNodeId) == 0) {
+        *topic->mutable_subscribers()->Add() = mNodeId;
+    }
+
+    // write back and close
+    ftruncate(mShmFd, 0);
+    index.SerializeToFileDescriptor(mShmFd);
+    flock(mShmFd, LOCK_UN);
+
+    // Publishers will check for updates before publishing, no nead to post semaphores
+    mDispatcher.SetCallback(topicName, cb);
+    return true;
+}
+
+bool IPCMessenger::Announce(std::string_view topicName, std::string_view mime) {
+    // write topic to meta
+    ipc_pubsub::Index index;
+    flock(mShmFd, LOCK_EX);
+    lseek(mShmFd, 0, SEEK_SET);
+
+    index.ParseFromFileDescriptor(mShmFd);
+
+    ipc_pubsub::Topic* topic = nullptr;
+    auto topicIt =
+        std::find_if(index.mutable_topics()->begin(), index.mutable_topics()->end(),
+                     [topicName](const auto& topicMsg) { return topicMsg.name() == topicName; });
+
+    if (topicIt == index.mutable_topics()->end()) {
+        // add it
+        topic = index.mutable_topics()->Add();
+        topic->set_name(topicName.data(), topicName.size());
+        topic->set_mime(mime.data(), mime.size());
+    } else {
+        topic = &*topicIt;
+        if (topic->mime() != mime) {
+            std::cerr << "Changing mime type " << topic->mime() << " -> " << mime << std::endl;
             topic->set_mime(mime.data(), mime.size());
-        } else {
-            topic = &*topicIt;
         }
+    }
 
-        // add ourselves to the list of subscribers
-        auto subIt = std::find(topic->subscribers().begin(), topic->subscribers().end(), mNodeId);
-        if (subIt == topic->subscribers().end()) {
-            *topic->mutable_subscribers()->Add() = mNodeId;
-        }
-        return true;
-    });
+    // add to publishers
+    if (std::count(topic->publishers().begin(), topic->publishers().end(), mNodeId) == 0) {
+        *topic->mutable_publishers()->Add() = mNodeId;
+    }
 
-    if (ret) {
-        std::string topicStr(topicName);
-        mSubscriptions[topicStr] = cb;
-        return true;
+    // write back and close
+    ftruncate(mShmFd, 0);
+    index.SerializeToFileDescriptor(mShmFd);
+    flock(mShmFd, LOCK_UN);
+    return true;
+}
+
+bool IPCMessenger::Publish(std::string_view topicName, const uint8_t* data, size_t len) {
+    auto buffer = ShmBuffer::Create(len);
+    if (buffer) {
+        assert(buffer->Size() == len);
+        std::copy(data, data + len, buffer->Data());
+        return Publish(topicName, buffer);
     } else {
         return false;
     }
 }
 
-static void FillPayload(const uint8_t* data, size_t len, ipc_pubsub::NotifyMessage* msg) {
-    if (len + 128 < QUEUE_MSGSIZE) {
-        std::cerr << "Inlining" << std::endl;
-        msg->set_inline_payload(data, len);
+bool IPCMessenger::Publish(std::string_view topicName, std::shared_ptr<ShmBuffer> buffer) {
+    // write topic to meta
+    ipc_pubsub::Index index;
+    flock(mShmFd, LOCK_EX);
+    lseek(mShmFd, 0, SEEK_SET);
+    index.ParseFromFileDescriptor(mShmFd);
+
+    ipc_pubsub::Topic* topic = nullptr;
+    auto topicIt =
+        std::find_if(index.mutable_topics()->begin(), index.mutable_topics()->end(),
+                     [topicName](const auto& topicMsg) { return topicMsg.name() == topicName; });
+
+    size_t recvCount = 0;
+    if (topicIt == index.mutable_topics()->end() || topicIt->mime().empty()) {
+        std::cerr << "Publishing a topic that hasn't been announced!, Not publishing" << std::endl;
     } else {
-        std::cerr << "Segment not yet implemented" << std::endl;
+        for (const uint64_t sub : topicIt->subscribers()) {
+            for (auto node : *index.mutable_nodes()) {
+                if (node.id() == sub) {
+                    ipc_pubsub::InFlight* inFlight = node.mutable_in_flight()->Add();
+                    inFlight->set_topic(topicName.data(), topicName.size());
+                    inFlight->set_payload_name(buffer->Name().data(), buffer->Name().size());
+                    recvCount++;
+                }
+            }
+        }
     }
-}
 
-bool IPCMessenger::Publish(std::string_view topicName, std::string_view mime, const uint8_t* data,
-                           size_t len) {
-    // add ourselves to the list of publishers, creating as necessary in the registry
-    // TODO actually make shared mem and set data
+    // add to publishers
+    if (std::count(topic->publishers().begin(), topic->publishers().end(), mNodeId) == 0) {
+        *topic->mutable_publishers()->Add() = mNodeId;
+    }
 
-    return updateIndex(mShmFd, [this, topicName, mime, len, data](ipc_pubsub::Index* index) {
-        // insert topic if it doesn't exist
-        auto topicIt =
-            std::find_if(index->mutable_topics()->begin(), index->mutable_topics()->end(),
-                         [topicName](const auto& topic) { return topic.name() == topicName; });
-        ipc_pubsub::Topic* topic = nullptr;
-        if (topicIt == index->mutable_topics()->end()) {
-            topic = index->mutable_topics()->Add();
-            topic->set_name(topicName.data(), topicName.size());
-            topic->set_mime(mime.data(), mime.size());
-        } else {
-            topic = &*topicIt;
+    // write back and close
+    ftruncate(mShmFd, 0);
+    index.SerializeToFileDescriptor(mShmFd);
+    flock(mShmFd, LOCK_UN);
+
+    // add buffer to recent and drop once receiver count hits 0
+    mInFlight.push_back(buffer);
+    for (auto it = mInFlight.begin(); it != mInFlight.end(); ++it) {
+        if ((*it)->RecieversRemaining() == 0) {
+            std::string name = (*it)->Name();
+            mInFlight.erase(it);
+            shm_unlink(name.c_str());
         }
-
-        // add ourselves to the list of publishers
-        if (auto it = std::find(topic->publishers().begin(), topic->publishers().end(), mNodeId);
-            it == topic->publishers().end()) {
-            *topic->mutable_publishers()->Add() = mNodeId;
-        }
-
-        // ensure we have notification queues for every other node
-        for (const auto& node : index->nodes()) {
-            if (mQueueCache.count(node.id()) == 0) {
-                struct mq_attr attr = QUEUE_ATTR_INITIALIZER;
-                std::cerr << "Opening: " << node.id() << " -> " << node.notify() << std::endl;
-                mqd_t mq = mq_open(node.notify().c_str(), O_CREAT | O_WRONLY, QUEUE_PERMS, &attr);
-                if (mq < 0) {
-                    std::cerr << "Error, cannot open the queue: " << strerror(errno) << std::endl;
-                } else {
-                    mQueueCache[node.id()] = mq;
-                }
-            }
-        }
-
-        // notify subscribers
-        ipc_pubsub::NotifyMessage notifyMsg;
-        notifyMsg.set_source(mNodeId);
-        FillPayload(data, len, &notifyMsg);
-        std::string notificationData;
-        if (!notifyMsg.SerializeToString(&notificationData)) {
-            std::cerr << "Failed to serialize" << std::endl;
-            return false;
-        }
-
-        for (const uint64_t sub : topic->subscribers()) {
-            // notify subscribers
-            std::cerr << "must notify: " << sub << std::endl;
-            if (auto qit = mQueueCache.find(sub); qit != mQueueCache.end()) {
-                int err =
-                    mq_send(qit->second, notificationData.c_str(), notificationData.size(), 0);
-                if (err == -1) {
-                    std::cerr << "Failed to send notification to nodeId: " << sub
-                              << ", queue: " << qit->second << " error: " << strerror(errno)
-                              << std::endl;
-                }
-            } else {
-                std::cerr << "Failed to find noification queue for " << sub << std::endl;
-            }
-        }
-
-        return true;
-    });
+    }
+    return true;
 }

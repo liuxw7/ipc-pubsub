@@ -1,22 +1,20 @@
 syntax = "proto3";
 
 package ipc_pubsub;
+message InFlight {
+  string topic = 1;
 
-message NotifyMessage {
-  uint64 source = 1;
-
-  // For small messages ( < 1k) it makes more sense to just include the message
-  bytes inline_payload = 2;
-
-  // shared memory segment containing the payload (if left empty then payload is
-  // in the inline_payload field)
-  string segment_payload = 3;
+  // shared memory containing the data
+  string payload_name = 2;
 };
 
 message Node {
   string name = 1;
   uint64 id = 2;
-  string notify = 3; // name of OS queue to send metadata / messages to
+  string notify = 3; // name of OS semaphore to up when sending a message
+
+  // Messages that need to be processed
+  repeated InFlight in_flight = 4;
 };
 
 message Topic {
