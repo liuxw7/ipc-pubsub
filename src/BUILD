@@ -1,3 +1,12 @@
+cc_test(
+    name = "test_dispatcher",
+    srcs = ["test_dispatcher.cc"],
+    deps = [
+        ":Dispatcher",
+        ":ShmMessage",
+    ],
+)
+
 cc_library(
     name = "Utils",
     srcs = ["Utils.cc"],
@@ -5,9 +14,10 @@ cc_library(
 )
 
 cc_library(
-    name = "ShmBuffer",
-    srcs = ["ShmBuffer.cc"],
-    hdrs = ["ShmBuffer.h"],
+    name = "ShmMessage",
+    srcs = ["ShmMessage.cc"],
+    hdrs = ["ShmMessage.h"],
+    linkopts = ["-lrt"],
     deps = [":Utils"],
 )
 
@@ -16,7 +26,7 @@ cc_library(
     srcs = ["Dispatcher.cc"],
     hdrs = ["Dispatcher.h"],
     deps = [
-        ":ShmBuffer",
+        ":ShmMessage",
         ":Utils",
     ],
 )

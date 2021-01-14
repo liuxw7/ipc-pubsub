@@ -6,11 +6,12 @@
 #include <mutex>
 #include <thread>
 
-#include "ShmBuffer.h"
+#include "ShmMessage.h"
 
 void Dispatcher::HandleLoop() {
+    std::cerr << "Enter HandleLoop" << std::endl;
     while (true) {
-        std::shared_ptr<ShmBuffer> buffer;
+        std::shared_ptr<ShmMessage> buffer;
         std::function<void(const uint8_t* data, size_t len)> handler;
 
         // wait for condition then fill buffer and handler
@@ -37,9 +38,10 @@ void Dispatcher::HandleLoop() {
         // finally call the handler with the buffer
         handler(buffer->Data(), buffer->Size());
     }
+    std::cerr << "Exit HandleLoop" << std::endl;
 }
 
-Dispatcher::Dispatcher() {
+Dispatcher::Dispatcher() : mKeepGoing(true) {
     mWorker = std::thread([this]() { HandleLoop(); });
 }
 
@@ -56,7 +58,7 @@ Dispatcher::~Dispatcher() {
 
 void Dispatcher::Push(std::string_view topic, std::string_view shmName) {
     std::lock_guard<std::mutex> lk(mMtx);
-    std::shared_ptr<ShmBuffer> buff = ShmBuffer::Load(shmName);
+    std::shared_ptr<ShmMessage> buff = ShmMessage::Load(shmName);
     mWorkQueue.push_back({std::string(topic), buff});
     mCv.notify_all();
 };

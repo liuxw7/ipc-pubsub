@@ -5,7 +5,7 @@
 #include <mutex>
 #include <thread>
 
-class ShmBuffer;
+class ShmMessage;
 
 class Dispatcher {
    public:
@@ -20,7 +20,7 @@ class Dispatcher {
    private:
     struct WorkItem {
         std::string topic;
-        std::shared_ptr<ShmBuffer> buffer;
+        std::shared_ptr<ShmMessage> buffer;
     };
 
     std::mutex mMtx;

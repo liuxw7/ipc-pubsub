@@ -14,7 +14,7 @@
 #include <random>
 #include <set>
 
-#include "ShmBuffer.h"
+#include "ShmMessage.h"
 #include "Utils.h"
 #include "protos/index.pb.h"
 
@@ -246,7 +246,7 @@ bool IPCMessenger::Announce(std::string_view topicName, std::string_view mime) {
 }
 
 bool IPCMessenger::Publish(std::string_view topicName, const uint8_t* data, size_t len) {
-    auto buffer = ShmBuffer::Create(len);
+    auto buffer = ShmMessage::Create(len);
     if (buffer) {
         assert(buffer->Size() == len);
         std::copy(data, data + len, buffer->Data());
@@ -256,7 +256,7 @@ bool IPCMessenger::Publish(std::string_view topicName, const uint8_t* data, size
     }
 }
 
-bool IPCMessenger::Publish(std::string_view topicName, std::shared_ptr<ShmBuffer> buffer) {
+bool IPCMessenger::Publish(std::string_view topicName, std::shared_ptr<ShmMessage> buffer) {
     // write topic to meta
     ipc_pubsub::Index index;
     flock(mShmFd, LOCK_EX);
@@ -268,7 +268,6 @@ bool IPCMessenger::Publish(std::string_view topicName, std::shared_ptr<ShmBuffer
         std::find_if(index.mutable_topics()->begin(), index.mutable_topics()->end(),
                      [topicName](const auto& topicMsg) { return topicMsg.name() == topicName; });
 
-    size_t recvCount = 0;
     if (topicIt == index.mutable_topics()->end() || topicIt->mime().empty()) {
         std::cerr << "Publishing a topic that hasn't been announced!, Not publishing" << std::endl;
     } else {
@@ -278,7 +277,7 @@ bool IPCMessenger::Publish(std::string_view topicName, std::shared_ptr<ShmBuffer
                     ipc_pubsub::InFlight* inFlight = node.mutable_in_flight()->Add();
                     inFlight->set_topic(topicName.data(), topicName.size());
                     inFlight->set_payload_name(buffer->Name().data(), buffer->Name().size());
-                    recvCount++;
+                    buffer->IncBalance();
                 }
             }
         }
@@ -294,14 +293,5 @@ bool IPCMessenger::Publish(std::string_view topicName, std::shared_ptr<ShmBuffer
     index.SerializeToFileDescriptor(mShmFd);
     flock(mShmFd, LOCK_UN);
 
-    // add buffer to recent and drop once receiver count hits 0
-    mInFlight.push_back(buffer);
-    for (auto it = mInFlight.begin(); it != mInFlight.end(); ++it) {
-        if ((*it)->RecieversRemaining() == 0) {
-            std::string name = (*it)->Name();
-            mInFlight.erase(it);
-            shm_unlink(name.c_str());
-        }
-    }
     return true;
 }

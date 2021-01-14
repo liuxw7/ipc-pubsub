@@ -23,7 +23,7 @@ class IPCMessenger : std::enable_shared_from_this<IPCMessenger> {
 
     bool Subscribe(std::string_view topic, CallbackT cb);
     bool Publish(std::string_view topic, const uint8_t* data, size_t len);
-    bool Publish(std::string_view topic, std::shared_ptr<ShmBuffer> buff);
+    bool Publish(std::string_view topic, std::shared_ptr<ShmMessage> buff);
     bool Announce(std::string_view topic, std::string_view mime);
 
     // Don't call this unless you know what you are doing
@@ -51,7 +51,4 @@ class IPCMessenger : std::enable_shared_from_this<IPCMessenger> {
     std::string mNotifyName;
     sem_t* mNotify;
     std::thread mNotifyThread;
-
-    // Need to keep shared memory alive long enough for it to get picked up by receivers
-    std::deque<std::shared_ptr<ShmBuffer>> mInFlight;
 };
