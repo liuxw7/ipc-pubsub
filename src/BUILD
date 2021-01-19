@@ -28,6 +28,7 @@ cc_library(
         ":UDSServer",
         ":Utils",
         "//protos:index_cc_proto",
+        "@com_github_gabime_spdlog//:spdlog",
     ],
 )
 
@@ -35,14 +36,20 @@ cc_library(
     name = "UDSClient",
     srcs = ["UDSClient.cc"],
     hdrs = ["UDSClient.h"],
-    deps = [":Utils"],
+    deps = [
+        ":Utils",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
 )
 
 cc_library(
     name = "UDSServer",
     srcs = ["UDSServer.cc"],
     hdrs = ["UDSServer.h"],
-    deps = [":Utils"],
+    deps = [
+        ":Utils",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
 )
 
 cc_library(

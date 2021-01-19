@@ -1,6 +1,7 @@
 #include "TopologyManager.h"
 
 #include <poll.h>
+#include <spdlog/spdlog.h>
 #include <stdio.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
@@ -26,11 +27,12 @@ using ipc_pubsub::TopologyMessage;
 constexpr size_t MAX_NOTIFY_SIZE = 2048;
 // Managers a set of unix domain socket servers and clients.
 
-TopologyManager::TopologyManager(std::string_view socketPath, std::string_view name) {
+TopologyManager::TopologyManager(std::string_view announcePath, std::string_view name) {
     std::random_device rd;
     std::mt19937_64 e2(rd());
     mNodeId = e2();
 
+    SPDLOG_INFO("Creating {}:{}", name, mNodeId);
     // add ourselves to the list of nodes
     auto node = std::make_shared<Node>();
     node->id = mNodeId;
@@ -41,9 +43,10 @@ TopologyManager::TopologyManager(std::string_view socketPath, std::string_view n
 
     mNodeById[mNodeId] = node;
 
-    mSocketPath.resize(socketPath.size() + 1);
-    mSocketPath[0] = '\0';
-    std::copy(socketPath.begin(), socketPath.end(), mSocketPath.begin() + 1);
+    // Announce path should be hidden ('\0' start)
+    mAnnouncePath.resize(announcePath.size() + 1);
+    mAnnouncePath[0] = '\0';
+    std::copy(announcePath.begin(), announcePath.end(), mAnnouncePath.begin() + 1);
 
     mShutdownFd = eventfd(0, EFD_SEMAPHORE);
     mMainThread = std::thread([this]() { MainLoop(); });
@@ -141,6 +144,7 @@ TopologyMessage TopologyManager::GetNodeMessage(uint64_t nodeId) {
 }
 
 void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
+    SPDLOG_INFO("ApplyUpdate: {}", msg.DebugString());
     std::lock_guard<std::mutex> lk(mMtx);
     for (const auto& nodeChange : msg.node_changes()) {
         if (nodeChange.op() == ipc_pubsub::JOIN) {
@@ -177,7 +181,8 @@ void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
 }
 
 void TopologyManager::RunClient() {
-    auto client = UDSClient::Create(mSocketPath);
+    SPDLOG_INFO("RunClient: {}", mAnnouncePath);
+    auto client = UDSClient::Create(mAnnouncePath);
     if (client == nullptr) return;
 
     // client connected send our details
@@ -185,6 +190,7 @@ void TopologyManager::RunClient() {
 
     // run for a while
     client->LoopUntilShutdown(mShutdownFd, [this](size_t len, uint8_t* data) {
+        SPDLOG_INFO("{} bytes recieved by client");
         TopologyMessage msg;
         msg.ParseFromArray(data, int(len));
         ApplyUpdate(msg);
@@ -194,10 +200,11 @@ void TopologyManager::RunClient() {
 }
 
 void TopologyManager::RunServer() {
+    SPDLOG_INFO("RunServer: {}", mAnnouncePath);
     // TODO should probably just make a TopologyServer type
     // If we are the leader then we need to keep track of which clients go with which nodes
     std::unordered_map<int, std::shared_ptr<Node>> mNodeByFd;
-    auto server = UDSServer::Create(mSocketPath);
+    auto server = UDSServer::Create(mAnnouncePath);
     if (server == nullptr) return;
 
     std::mutex serverMtx;
@@ -213,6 +220,8 @@ void TopologyManager::RunServer() {
                 msg.MergeFrom(GetNodeMessage(pair.second));
             }
         }
+
+        SPDLOG_INFO("onConnect, sending message");
         server->Send(fd, msg);
     };
     auto onDisconnect = [this, &serverMtx, &fdToNode, &server](int fd) {
@@ -221,7 +230,7 @@ void TopologyManager::RunServer() {
             std::lock_guard<std::mutex> lk(serverMtx);
             auto it = fdToNode.find(fd);
             if (it == fdToNode.end()) {
-                std::cerr << "Node connected but never identified itself" << std::endl;
+                SPDLOG_ERROR("Node connected but never identified itself");
                 return;
             }
             auto nodeChangePtr = msg.mutable_node_changes()->Add();
@@ -232,6 +241,8 @@ void TopologyManager::RunServer() {
             fdToNode.erase(it);
         }
         ApplyUpdate(msg);
+
+        SPDLOG_INFO("broadcasting disconnect message");
         server->Broadcast(msg);
     };
     auto onMessage = [this, &serverMtx, &fdToNode, &server](int fd, size_t len, uint8_t* data) {
@@ -268,17 +279,17 @@ void TopologyManager::RunServer() {
 
         // update hared node information and then broadcast to other nodes
         ApplyUpdate(msg);
+
+        SPDLOG_INFO("broadcasting message");
         server->Broadcast(len, data);
     };
 
     // server started,
     // we should immediately get connections followed by node registration
+    // from all living nodes
     // NOTE: for the sake of continuity we won't delete the existing nodes
-    // until we readd them here, BUT GetConnectedStateMessage() won't
-    // include nodes that aren't reconnected yet. This means new connections
-    // won't be told about clients that used to be connected to the old
-    // leader but haven't connected to use *until* they connect to us
-    // and identity themselves.
+    // NOTE: what happens if a node dies while server changeover is taking
+    // place and never connects? Perhaps we could send a test ping to the client's address?
     server->LoopUntilShutdown(mShutdownFd, onConnect, onDisconnect, onMessage);
 }
 

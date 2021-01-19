@@ -30,6 +30,7 @@ std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath) {
     if (bind(sockFd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
         // fail
         perror("Bind error");
+        close(sockFd);
         return nullptr;
     }
 
@@ -40,6 +41,7 @@ std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath) {
     // rebuild the topology from that
     if (listen(sockFd, 10) == -1) {
         perror("listen error");
+        close(sockFd);
         return nullptr;
     }
 

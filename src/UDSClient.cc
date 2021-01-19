@@ -1,6 +1,7 @@
 #include "UDSClient.h"
 
 #include <poll.h>
+#include <spdlog/spdlog.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -20,11 +21,9 @@ std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath) {
 
     int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
     if (fd == -1) {
-        perror("socket error");
+        SPDLOG_ERROR("failed to create socket: {}", strerror(errno));
         return nullptr;
     }
-
-    OnRet onRet2([fd]() { close(fd); });
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
@@ -32,10 +31,12 @@ std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath) {
     addr.sun_path[sockPath.size()] = 0;
 
     if (connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
-        perror("connect error");
+        SPDLOG_ERROR("failed to connect to {}, error: {}", sockPath, strerror(errno));
+        close(fd);
         return nullptr;
     }
 
+    SPDLOG_INFO("Connected with {}", fd);
     return std::make_shared<UDSClient>(fd);
 }
 
@@ -56,12 +57,14 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
     while (1) {
         int ret = poll(&fds[0], 2, 0);
         if (ret < 0) {
-            perror("Failed to poll");
+            SPDLOG_ERROR("Failed to Poll: {}", strerror(errno));
             return -1;
         }
 
         if (fds[0].revents != 0) {
+            SPDLOG_INFO("Polled shutdown");
             // shutdown event received, exit
+            SPDLOG_ERROR("UDSClient shutdown");
             return 0;
         }
 
@@ -78,4 +81,12 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
 }
 
 // send to client with the given file descriptor
-int64_t UDSClient::Send(size_t len, uint8_t* message) { return write(mFd, message, len); }
+int64_t UDSClient::Send(size_t len, uint8_t* message) {
+    SPDLOG_INFO("Writing {} bytes to fd: {}", len, mFd);
+    int64_t ret = write(mFd, message, len);
+    if (ret == -1) {
+        SPDLOG_ERROR("Failed to send: {}", strerror(errno));
+    } else {
+        return ret;
+    }
+}

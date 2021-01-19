@@ -1,4 +1,6 @@
 #pragma once
+#include <spdlog/spdlog.h>
+
 #include <functional>
 #include <memory>
 
@@ -11,14 +13,13 @@ class UDSClient {
 
     // send to client with the given file descriptor
     int64_t Send(size_t len, uint8_t* message);
+
     template <typename T>
     int64_t Send(const T& msg) {
-        bool ret = msg.SerializeToFileDescriptor(mFd);
-        if (ret) {
-            return msg.ByteSizeLong();
-        } else {
-            return -1;
-        }
+        SPDLOG_INFO("Sending description: {}", msg.DebugString());
+        thread_local std::string data;
+        msg.SerializeToString(&data);
+        return Send(data.size(), reinterpret_cast<uint8_t*>(data.data()));
     }
 
    private:

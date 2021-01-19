@@ -8,7 +8,7 @@
 
 class TopologyManager {
    public:
-    TopologyManager(std::string_view socketPath, std::string_view name);
+    TopologyManager(std::string_view announcePath, std::string_view name);
     ~TopologyManager();
     void Apply(const ipc_pubsub::TopologyMessage& msg);
     ipc_pubsub::TopologyMessage GetNodeMessage(uint64_t nodeId);
@@ -36,7 +36,7 @@ class TopologyManager {
 
     int mShutdownFd = -1;
     std::atomic_bool mShutdown = false;
-    std::string mSocketPath;
+    std::string mAnnouncePath;
 
     std::mutex mMtx;
     std::unordered_map<uint64_t, std::shared_ptr<Node>> mNodeById;
