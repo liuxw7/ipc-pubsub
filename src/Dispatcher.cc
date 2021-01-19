@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 
+#include "Globals.h"
 #include "ShmMessage.h"
 
 void Dispatcher::HandleLoop() {
@@ -59,8 +60,12 @@ Dispatcher::~Dispatcher() {
 void Dispatcher::Push(std::string_view topic, std::string_view shmName) {
     std::lock_guard<std::mutex> lk(mMtx);
     std::shared_ptr<ShmMessage> buff = ShmMessage::Load(shmName);
-    mWorkQueue.push_back({std::string(topic), buff});
-    mCv.notify_all();
+    if (buff == nullptr) {
+        std::cerr << "Skipping message on topic: " << topic << std::endl;
+    } else {
+        mWorkQueue.push_back({std::string(topic), buff});
+        mCv.notify_all();
+    }
 };
 
 void Dispatcher::SetCallback(std::string_view topic,

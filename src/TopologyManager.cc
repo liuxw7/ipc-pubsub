@@ -1,0 +1,274 @@
+#include "TopologyManager.h"
+
+#include <poll.h>
+#include <stdio.h>
+#include <sys/eventfd.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <functional>
+#include <iostream>
+#include <string>
+#include <thread>
+
+#include "UDSClient.h"
+#include "UDSServer.h"
+#include "protos/index.pb.h"
+
+using ipc_pubsub::NodeOperation;
+using ipc_pubsub::TopicOperation;
+using ipc_pubsub::TopologyMessage;
+constexpr size_t MAX_NOTIFY_SIZE = 2048;
+// Managers a set of unix domain socket servers and clients.
+
+TopologyManager::TopologyManager(std::string_view socketPath) : mSocketPath(socketPath) {
+    mShutdownFd = eventfd(0, EFD_SEMAPHORE);
+    mMainThread = std::thread([this]() { MainLoop(); });
+}
+
+TopologyManager::~TopologyManager() {
+    // very large number so everything receives and decremenets but not UINT64_MAX so we don't roll
+    // over
+    size_t shutItDown = UINT32_MAX;
+    write(mShutdownFd, &shutItDown, sizeof(shutItDown));
+    mShutdown = true;
+    mMainThread.join();
+}
+
+// void TopologyManager::ApplyUpdate(int fd, size_t len, uint8_t* data) {
+//    TopologyMessage msg;
+//    msg.ParseFromArray(data, len);
+//    ApplyUpdate(fd, msg);
+//}
+//
+// TopologyManager::ApplyUpdate(size_t len, uint8_t* data) {
+//    msg.Parse(data, len);
+//    ApplyUpdate(msg);
+//}
+//
+// TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
+//    // TODO
+//}
+//
+// TopologyManager::ApplyUpdate(int fd, const TopologyMessage& msg) {
+//    // TODO
+//}
+//
+// TopologyMessage::CreateClient(int metaFd) {}
+//
+// TopologyMessage::DeleteClient(int metaFd) {}
+//
+// TopologyMessage TopologyManager::GetConnectedStateMessage() {
+//    // Returns all the clients that are either us (matches mNodeId) or are connected (have a meta
+//    // fd)
+//    TopologyMessage out;
+//    for (const auto& node : mNodeByFd) {
+//        auto nodeChange = out.mutable_node_changes()->Add();
+//        nodeChange->set_id(node.id);
+//        nodeChange->set_name(node.name);
+//        nodeChange->set_address(node.address);
+//        nodeChange->set_op(NodeOperation::JOIN);
+//        for (const auto& sub : node.subscriptions) {
+//            auto topicChange = out.mutable_topic_changes()->Add();
+//            topicChange->set_name(sub.name);
+//            topicChange->set_node_id(node.id);
+//            topicChange->set_op(TopicOperation::SUBSCRIBE);
+//        }
+//
+//        for (const auto& pub : node.publications) {
+//            auto topicChange = out.mutable_topic_changes()->Add();
+//            topicChange->set_name(pub.name);
+//            topicChange->set_mime(pub.mime);
+//            topicChange->set_node_id(node.id);
+//            topicChange->set_op(TopicOperation::ANNOUNCE);
+//        }
+//    }
+//    return out;
+//}
+
+static TopologyMessage SerializeNode(const TopologyManager::Node& node) {
+    TopologyMessage out;
+    auto nodeChange = out.mutable_node_changes()->Add();
+    nodeChange->set_id(node.id);
+    nodeChange->set_name(node.name);
+    nodeChange->set_address(node.address);
+    nodeChange->set_op(NodeOperation::JOIN);
+    for (const auto& sub : node.subscriptions) {
+        auto topicChange = out.mutable_topic_changes()->Add();
+        topicChange->set_name(sub);
+        topicChange->set_node_id(node.id);
+        topicChange->set_op(TopicOperation::SUBSCRIBE);
+    }
+
+    for (const auto& pub : node.publications) {
+        auto topicChange = out.mutable_topic_changes()->Add();
+        topicChange->set_name(pub.second.name);
+        topicChange->set_mime(pub.second.mime);
+        topicChange->set_node_id(node.id);
+        topicChange->set_op(TopicOperation::ANNOUNCE);
+    }
+
+    return out;
+}
+
+TopologyMessage TopologyManager::GetNodeMessage(uint64_t nodeId) {
+    std::lock_guard<std::mutex> lk(mMtx);
+    auto nodePtr = mNodeById.find(nodeId);
+    return SerializeNode(*nodePtr->second);
+}
+
+void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
+    std::lock_guard<std::mutex> lk(mMtx);
+    for (const auto& nodeChange : msg.node_changes()) {
+        if (nodeChange.op() == ipc_pubsub::JOIN) {
+            auto [it, inserted] = mNodeById.emplace(nodeChange.id(), nullptr);
+            if (inserted) {
+                it->second = std::make_shared<Node>();
+                it->second->id = nodeChange.id();
+                it->second->name = nodeChange.name();
+                it->second->address = nodeChange.address();
+            }
+        } else if (nodeChange.op() == ipc_pubsub::LEAVE) {
+            auto it = mNodeById.find(nodeChange.id());
+            mNodeById.erase(it);
+        }
+    }
+    for (const auto& topicChange : msg.topic_changes()) {
+        auto [nit, nodeInserted] = mNodeById.emplace(topicChange.node_id(), nullptr);
+        if (nodeInserted) {
+            nit->second = std::make_shared<Node>();
+            nit->second->id = topicChange.node_id();
+        }
+
+        if (topicChange.op() == ipc_pubsub::ANNOUNCE) {
+            nit->second->publications.emplace(
+                topicChange.name(),
+                Publication{.name = topicChange.name(), .mime = topicChange.mime()});
+            // TODO validate that the MIME doesn't change?
+        } else if (topicChange.op() == ipc_pubsub::SUBSCRIBE) {
+            nit->second->subscriptions.emplace(topicChange.name());
+        } else if (topicChange.op() == ipc_pubsub::UNSUBSCRIBE) {
+            nit->second->subscriptions.erase(topicChange.name());
+        }
+    }
+}
+
+void TopologyManager::RunClient() {
+    auto client = UDSClient::Create(mSocketPath);
+    if (client == nullptr) return;
+
+    // client connected send our details
+    client->Send(GetNodeMessage(mNodeId));
+
+    // run for a while
+    client->LoopUntilShutdown(mShutdownFd, [this](size_t len, uint8_t* data) {
+        TopologyMessage msg;
+        msg.ParseFromArray(data, int(len));
+        ApplyUpdate(msg);
+    });
+
+    // disconnected
+}
+
+void TopologyManager::RunServer() {
+    // TODO should probably just make a TopologyServer type
+    // If we are the leader then we need to keep track of which clients go with which nodes
+    std::unordered_map<int, std::shared_ptr<Node>> mNodeByFd;
+    auto server = UDSServer::Create(mSocketPath);
+    if (server == nullptr) return;
+
+    std::mutex serverMtx;
+    std::unordered_map<int, uint64_t> fdToNode;
+    auto onConnect = [this, &serverMtx, &fdToNode, &server](int fd) {
+        // new client, send complete state message including all
+        // nodes that we have a connection to (and none that hard ??
+        // because they are disconnected but used to exist)
+        TopologyMessage msg;
+        {
+            std::lock_guard<std::mutex> lk(serverMtx);
+            for (const auto& pair : fdToNode) {
+                msg.MergeFrom(GetNodeMessage(pair.second));
+            }
+        }
+        server->Send(fd, msg);
+    };
+    auto onDisconnect = [this, &serverMtx, &fdToNode, &server](int fd) {
+        TopologyMessage msg;
+        {
+            std::lock_guard<std::mutex> lk(serverMtx);
+            auto it = fdToNode.find(fd);
+            if (it == fdToNode.end()) {
+                std::cerr << "Node connected but never identified itself" << std::endl;
+                return;
+            }
+            auto nodeChangePtr = msg.mutable_node_changes()->Add();
+            nodeChangePtr->set_id(it->second);
+            nodeChangePtr->set_op(NodeOperation::LEAVE);
+
+            // notifiy all clients that a client has been removed
+            fdToNode.erase(it);
+        }
+        ApplyUpdate(msg);
+        server->Broadcast(msg);
+    };
+    auto onMessage = [this, &serverMtx, &fdToNode, &server](int fd, size_t len, uint8_t* data) {
+        // notify all clients that a new client has been updated
+        TopologyMessage msg;
+        msg.ParseFromArray(data, int(len));
+
+        // get an ID out of the message (should only have one, clients should only
+        // send information about themselves)
+        uint64_t id = UINT64_MAX;
+        for (const auto& nodeChange : msg.node_changes()) {
+            if (id == UINT64_MAX)
+                id = nodeChange.id();
+            else
+                assert(id == nodeChange.id());
+        }
+        for (const auto& topicChange : msg.topic_changes()) {
+            if (id == UINT64_MAX)
+                id = topicChange.node_id();
+            else
+                assert(id == topicChange.node_id());
+        }
+        assert(id != UINT64_MAX);
+
+        // Update fd -> nodeId map
+        {
+            std::lock_guard<std::mutex> lk(serverMtx);
+            auto [it, inserted] = fdToNode.emplace(fd, 0);
+            if (inserted)
+                it->second = id;
+            else
+                assert(it->second == id);
+        }
+
+        // update hared node information and then broadcast to other nodes
+        ApplyUpdate(msg);
+        server->Broadcast(len, data);
+    };
+
+    // server started,
+    // we should immediately get connections followed by node registration
+    // NOTE: for the sake of continuity we won't delete the existing nodes
+    // until we readd them here, BUT GetConnectedStateMessage() won't
+    // include nodes that aren't reconnected yet. This means new connections
+    // won't be told about clients that used to be connected to the old
+    // leader but haven't connected to use *until* they connect to us
+    // and identity themselves.
+    server->LoopUntilShutdown(mShutdownFd, onConnect, onDisconnect, onMessage);
+}
+
+void TopologyManager::MainLoop() {
+    while (!mShutdown) {
+        RunClient();
+
+        if (mShutdown) break;
+
+        // if we exited the client then there might not be a server, try to create one
+        usleep(rand() % 1000);
+        RunServer();
+    }
+}

@@ -26,29 +26,28 @@ class IPCMessenger : std::enable_shared_from_this<IPCMessenger> {
     bool Publish(std::string_view topic, std::shared_ptr<ShmMessage> buff);
     bool Announce(std::string_view topic, std::string_view mime);
 
-    // Don't call this unless you know what you are doing
-    void Shutdown();
-
    private:
     void OnNotify();
+    sem_t* GetSem(const std::string& semName);
 
     std::atomic_bool mKeepGoing = false;
-    int mShmFd;
+    const int mShmFd;
 
     // Data structure for current subscriptions and callback thread
     Dispatcher mDispatcher;
 
     // Used to notify other nodes
-    std::unordered_map<uint64_t, sem_t*> mSemCache;
+    std::mutex mSemMtx;  // lock for sem cache
+    std::unordered_map<std::string, sem_t*> mSemCache;
 
     // metadata IPC
-    std::string mIpcName;
+    const std::string mIpcName;
 
-    std::string mNodeName;
-    uint64_t mNodeId;
+    const std::string mNodeName;
+    const uint64_t mNodeId;
 
     // Wait for semaphore then reload / dispatch
-    std::string mNotifyName;
+    const std::string mNotifyName;
     sem_t* mNotify;
     std::thread mNotifyThread;
 };

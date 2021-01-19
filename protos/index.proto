@@ -34,3 +34,36 @@ message Index {
   repeated Node nodes = 1;
   repeated Topic topics = 2;
 }
+
+enum NodeOperation {
+  NODE_UNSET = 0;
+  JOIN = 1;
+  LEAVE = 2;
+};
+
+enum TopicOperation {
+  TOPIC_UNSET = 0;
+  ANNOUNCE = 1; // i.e. I'm going to publish
+  SUBSCRIBE = 2;
+  UNSUBSCRIBE = 3;
+};
+
+message NodeChange {
+  uint64 id = 1;
+  NodeOperation op = 2;
+  string name = 3;
+  string address = 4; // named unix domain socket to send updates to
+};
+
+message TopicChange {
+  string name = 1;
+  string mime = 2; // only used by announce
+
+  uint64 node_id = 3;
+  TopicOperation op = 4;
+};
+
+message TopologyMessage {
+  repeated NodeChange node_changes = 1;
+  repeated TopicChange topic_changes = 2;
+};

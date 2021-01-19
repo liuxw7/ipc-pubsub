@@ -10,7 +10,9 @@ class atomic;
  * Wraps a shared memory segment containining a message and reception count.
  * Once remaining receptions reaches zero the messages is deallocated
  */
-class ShmMessage {
+class ShmMessage : std::enable_shared_from_this<ShmMessage> {
+    using CountType = int32_t;
+
    public:
     ShmMessage(std::string_view shmName, int shmFd, uint64_t mapLen, uint8_t* mapped);
     ShmMessage(const ShmMessage& other) = delete;
@@ -51,5 +53,5 @@ class ShmMessage {
 
     // reference count in shared memory, when this hits zero the *sender* is
     // responsible for unlinking, this gives the sender the power to reuse
-    std::atomic<int32_t>* mBalance;
+    CountType* mBalance;
 };
