@@ -8,7 +8,7 @@
 
 class TopologyManager {
    public:
-    TopologyManager(std::string_view socketPath);
+    TopologyManager(std::string_view socketPath, std::string_view name);
     ~TopologyManager();
     void Apply(const ipc_pubsub::TopologyMessage& msg);
     ipc_pubsub::TopologyMessage GetNodeMessage(uint64_t nodeId);

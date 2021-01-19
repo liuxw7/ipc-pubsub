@@ -9,7 +9,10 @@
 #include <unistd.h>
 
 #include <functional>
+#include <iomanip>
 #include <iostream>
+#include <random>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -23,7 +26,25 @@ using ipc_pubsub::TopologyMessage;
 constexpr size_t MAX_NOTIFY_SIZE = 2048;
 // Managers a set of unix domain socket servers and clients.
 
-TopologyManager::TopologyManager(std::string_view socketPath) : mSocketPath(socketPath) {
+TopologyManager::TopologyManager(std::string_view socketPath, std::string_view name) {
+    std::random_device rd;
+    std::mt19937_64 e2(rd());
+    mNodeId = e2();
+
+    // add ourselves to the list of nodes
+    auto node = std::make_shared<Node>();
+    node->id = mNodeId;
+    node->name = name;
+    std::ostringstream oss;
+    oss << '\0' << std::hex << std::setw(16) << std::setfill('0') << mNodeId;
+    node->address = oss.str();
+
+    mNodeById[mNodeId] = node;
+
+    mSocketPath.resize(socketPath.size() + 1);
+    mSocketPath[0] = '\0';
+    std::copy(socketPath.begin(), socketPath.end(), mSocketPath.begin() + 1);
+
     mShutdownFd = eventfd(0, EFD_SEMAPHORE);
     mMainThread = std::thread([this]() { MainLoop(); });
 }

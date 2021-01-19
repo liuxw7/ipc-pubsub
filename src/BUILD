@@ -3,7 +3,10 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 cc_binary(
     name = "topology_node",
     srcs = ["topology_node.cc"],
-    deps = [":TopologyManager"],
+    deps = [
+        ":TopologyManager",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
 )
 
 cc_binary(

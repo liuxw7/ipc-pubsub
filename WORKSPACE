@@ -15,3 +15,23 @@ http_archive(
 load("@com_google_protobuf//:protobuf_deps.bzl", "protobuf_deps")
 
 protobuf_deps()
+
+SPDLOG_VERSION = "1.7.0"
+
+http_archive(
+    name = "com_github_gabime_spdlog",
+    build_file = "@com_github_micahcc_ipc_pubsub//bazel/external:spdlog.BUILD",
+    sha256 = "f0114a4d3c88be9e696762f37a7c379619443ce9d668546c61b21d41affe5b62",
+    strip_prefix = "spdlog-%s" % SPDLOG_VERSION,
+    urls = ["https://github.com/gabime/spdlog/archive/v%s.tar.gz" % SPDLOG_VERSION],
+)
+
+FMTLIB_VERSION = "7.1.3"
+
+http_archive(
+    name = "com_github_fmtlib_fmt",
+    build_file = "@com_github_micahcc_ipc_pubsub//bazel/external:fmtlib.BUILD",
+    sha256 = "5d98c504d0205f912e22449ecdea776b78ce0bb096927334f80781e720084c9f",
+    strip_prefix = "fmt-%s" % FMTLIB_VERSION,
+    urls = ["https://github.com/fmtlib/fmt/releases/download/%s/fmt-%s.zip" % (FMTLIB_VERSION, FMTLIB_VERSION)],
+)

@@ -17,7 +17,6 @@ std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath) {
     struct sockaddr_un addr;
     assert(!sockPath.empty());
     assert(sockPath.size() + 1 < sizeof(addr.sun_path));
-    assert(sockPath[0] != '\0');
 
     int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
     if (fd == -1) {
