@@ -190,7 +190,7 @@ void TopologyManager::RunClient() {
 
     // run for a while
     client->LoopUntilShutdown(mShutdownFd, [this](size_t len, uint8_t* data) {
-        SPDLOG_INFO("{} bytes recieved by client");
+        SPDLOG_INFO("{} bytes recieved by client", len);
         TopologyMessage msg;
         msg.ParseFromArray(data, int(len));
         ApplyUpdate(msg);
@@ -207,27 +207,31 @@ void TopologyManager::RunServer() {
     auto server = UDSServer::Create(mAnnouncePath);
     if (server == nullptr) return;
 
-    std::mutex serverMtx;
+    std::mutex mapMtx;
     std::unordered_map<int, uint64_t> fdToNode;
-    auto onConnect = [this, &serverMtx, &fdToNode, &server](int fd) {
+    auto onConnect = [this, &mapMtx, &fdToNode](int fd) {
         // new client, send complete state message including all
         // nodes that we have a connection to (and none that hard ??
         // because they are disconnected but used to exist)
         TopologyMessage msg;
         {
-            std::lock_guard<std::mutex> lk(serverMtx);
+            std::lock_guard<std::mutex> lk(mapMtx);
             for (const auto& pair : fdToNode) {
                 msg.MergeFrom(GetNodeMessage(pair.second));
             }
         }
 
         SPDLOG_INFO("onConnect, sending message");
-        server->Send(fd, msg);
+        bool sent = msg.SerializeToFileDescriptor(fd);
+        if (!sent) {
+            SPDLOG_ERROR("Failed to send topology");
+        }
+        SPDLOG_INFO("sent");
     };
-    auto onDisconnect = [this, &serverMtx, &fdToNode, &server](int fd) {
+    auto onDisconnect = [this, &mapMtx, &fdToNode](int fd) {
         TopologyMessage msg;
         {
-            std::lock_guard<std::mutex> lk(serverMtx);
+            std::lock_guard<std::mutex> lk(mapMtx);
             auto it = fdToNode.find(fd);
             if (it == fdToNode.end()) {
                 SPDLOG_ERROR("Node connected but never identified itself");
@@ -243,9 +247,12 @@ void TopologyManager::RunServer() {
         ApplyUpdate(msg);
 
         SPDLOG_INFO("broadcasting disconnect message");
-        server->Broadcast(msg);
+        {
+            std::lock_guard<std::mutex> lk(mapMtx);
+            for (const auto& pair : fdToNode) msg.SerializeToFileDescriptor(pair.first);
+        }
     };
-    auto onMessage = [this, &serverMtx, &fdToNode, &server](int fd, size_t len, uint8_t* data) {
+    auto onMessage = [this, &mapMtx, &fdToNode](int fd, size_t len, uint8_t* data) {
         // notify all clients that a new client has been updated
         TopologyMessage msg;
         msg.ParseFromArray(data, int(len));
@@ -269,7 +276,7 @@ void TopologyManager::RunServer() {
 
         // Update fd -> nodeId map
         {
-            std::lock_guard<std::mutex> lk(serverMtx);
+            std::lock_guard<std::mutex> lk(mapMtx);
             auto [it, inserted] = fdToNode.emplace(fd, 0);
             if (inserted)
                 it->second = id;
@@ -281,7 +288,10 @@ void TopologyManager::RunServer() {
         ApplyUpdate(msg);
 
         SPDLOG_INFO("broadcasting message");
-        server->Broadcast(len, data);
+        {
+            std::lock_guard<std::mutex> lk(mapMtx);
+            for (const auto& pair : fdToNode) msg.SerializeToFileDescriptor(pair.first);
+        }
     };
 
     // server started,

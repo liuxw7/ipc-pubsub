@@ -56,7 +56,7 @@ int sequence_version() {
     const char* socket_path = "socket";
     struct sockaddr_un addr;
     char buf[100];
-    int fd, rc;
+    int fd, rc, bts;
 
     if ((fd = socket(AF_UNIX, SOCK_SEQPACKET, 0)) == -1) {
         perror("socket error");
@@ -78,9 +78,16 @@ int sequence_version() {
     }
 
     while ((rc = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
-        if (write(fd, buf, rc) != rc) {
+        printf("read %u bytes: ", rc);
+        for (int i = 0; i < rc; ++i) printf("%02x", buf[i]);
+        printf("\n");
+        if ((bts = write(fd, buf, rc)) != rc) {
+            // if ((bts = sendmsg(fd, &msg, 0)) != rc) {
+            if (bts < 0) {
+                perror("Error");
+            }
             if (rc > 0)
-                fprintf(stderr, "partial write");
+                fprintf(stderr, "partial write: %i", bts);
             else {
                 perror("write error");
                 exit(-1);

@@ -1,3 +1,4 @@
+#include <poll.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -110,8 +111,21 @@ int sequence_version() {
             continue;
         }
 
-        while ((rc = read(cl, buf, sizeof(buf))) > 0) {
-            printf("read %u bytes: %.*s\n", rc, rc, buf);
+        while (true) {
+            pollfd pfd;
+            pfd.fd = cl;
+            // pfd.events = pfd.revents = 0;
+            pfd.events = POLLIN;
+            if (int ret = poll(&pfd, 1, 10000); ret < 0) {
+                perror("Failed to poll");
+                return -1;
+            }
+            printf("poll result: %2x\n", pfd.revents);
+
+            rc = recv(cl, buf, sizeof(buf), 0);
+            printf("read %u bytes: ", rc);
+            for (int i = 0; i < rc; ++i) printf("%02x", buf[i]);
+            printf("\n");
         }
         if (rc == -1) {
             perror("read");

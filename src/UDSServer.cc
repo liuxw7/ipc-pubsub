@@ -1,6 +1,7 @@
 #include "UDSServer.h"
 
 #include <poll.h>
+#include <spdlog/spdlog.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -50,15 +51,6 @@ std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath) {
 
 UDSServer::UDSServer(int fd) : mListenFd(fd) {}
 
-void UDSServer::Broadcast(size_t len, uint8_t* data) {
-    std::unordered_set<int> clients;
-    {
-        std::lock_guard<std::mutex> lk(mMtx);
-        clients = mClients;
-    }
-    for (int client : clients) write(client, data, len);
-}
-
 int UDSServer::LoopUntilShutdown(int shutdownEventFd, std::function<void(int)> onConnect,
                                  std::function<void(int)> onDisconnect,
                                  std::function<void(int, size_t, uint8_t*)> onData) {
@@ -85,18 +77,17 @@ int UDSServer::LoopUntilShutdown(int shutdownEventFd, std::function<void(int)> o
         {
             std::lock_guard<std::mutex> lk(mMtx);
             for (int fd : mClients) {
-                pollFds.push_back({
-                    .fd = fd,
-                    .events = POLLIN | POLLHUP | POLLRDHUP,
-                });
+                pollFds.push_back({.fd = fd, .events = POLLIN});
             }
         }
 
         // read client file descriptors
-        if (int ret = poll(pollFds.data(), pollFds.size(), 0); ret < 0) {
+        SPDLOG_INFO("Begin poll {} fds", pollFds.size());
+        if (int ret = poll(pollFds.data(), pollFds.size(), -1); ret < 0) {
             perror("Failed to poll");
             return -1;
         }
+        SPDLOG_INFO("Polled [1] {:x} [2] {:x}", pollFds[0].revents, pollFds[1].revents);
 
         if (pollFds[0].revents != 0) {
             // shutdown event received, exit
@@ -119,9 +110,11 @@ int UDSServer::LoopUntilShutdown(int shutdownEventFd, std::function<void(int)> o
         for (size_t i = 2; i < pollFds.size(); ++i) {
             if (pollFds[i].revents == 0) {
                 // no event for the filedescriptor
+                SPDLOG_INFO("Empty poll");
                 continue;
             }
 
+            SPDLOG_INFO("Polled input: {:x}", pollFds[i].revents);
             if ((pollFds[i].revents & POLLIN) != 0) {
                 uint8_t buffer[UINT16_MAX];
                 int64_t nBytes = read(pollFds[i].fd, buffer, UINT16_MAX);

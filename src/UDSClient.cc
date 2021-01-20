@@ -50,16 +50,18 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
     fds[0].revents = 0;
 
     fds[1].fd = mFd;
-    fds[1].events = POLLIN | POLLRDHUP | POLLHUP;
+    fds[1].events = POLLIN;
     fds[1].revents = 0;
     // now that we are connected field events from leader OR shutdown event
     // wait for it to close or shutdown event
     while (1) {
-        int ret = poll(&fds[0], 2, 0);
+        SPDLOG_INFO("Begin poll, {}", mFd);
+        int ret = poll(fds, 2, -1);
         if (ret < 0) {
             SPDLOG_ERROR("Failed to Poll: {}", strerror(errno));
             return -1;
         }
+        SPDLOG_INFO("Polled [1] {:x} [2] {:x}", fds[0].revents, fds[1].revents);
 
         if (fds[0].revents != 0) {
             SPDLOG_INFO("Polled shutdown");
@@ -68,14 +70,29 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
             return 0;
         }
 
-        if (fds[1].revents & (POLLHUP | POLLRDHUP)) {
-            // server shutdown
-            return 1;
-        } else if (fds[0].revents & POLLIN) {
-            // socket has data, read it
-            uint8_t buffer[UINT16_MAX];
-            int64_t nBytes = read(mFd, buffer, UINT16_MAX);
-            onData(nBytes, buffer);
+        if (fds[1].revents != 0) {
+            SPDLOG_INFO("Polled input: {:x}", fds[1].revents);
+            if (fds[1].revents & POLLIN) {
+                // socket has data, read it
+                uint8_t buffer[1024];
+                SPDLOG_INFO("onData");
+                int64_t nBytes = read(mFd, buffer, 1024);
+                if (nBytes < 0) {
+                    SPDLOG_ERROR("Error reading: {}", strerror(errno));
+                } else {
+                    onData(nBytes, buffer);
+                }
+            } else if (fds[1].revents & POLLERR) {
+                SPDLOG_ERROR("error");
+                return -1;
+            } else if (fds[1].revents & POLLHUP) {
+                // server shutdown
+                SPDLOG_INFO("Server shutdown");
+                return -1;
+            } else if (fds[1].revents & POLLNVAL) {
+                SPDLOG_INFO("File descriptor not open");
+                return -1;
+            }
         }
     }
 }
@@ -83,7 +100,8 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
 // send to client with the given file descriptor
 int64_t UDSClient::Send(size_t len, uint8_t* message) {
     SPDLOG_INFO("Writing {} bytes to fd: {}", len, mFd);
-    int64_t ret = write(mFd, message, len);
+    int64_t ret = send(mFd, message, len, MSG_EOR);
+    SPDLOG_INFO("Wrote {} bytes", ret);
     if (ret == -1) {
         SPDLOG_ERROR("Failed to send: {}", strerror(errno));
     } else {
