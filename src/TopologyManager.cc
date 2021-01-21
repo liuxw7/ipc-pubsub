@@ -59,14 +59,6 @@ TopologyManager::TopologyManager(std::string_view announcePath, std::string_view
     oss << '\0' << std::hex << std::setw(16) << std::setfill('0') << mNodeId;
     mAddress = oss.str();
 
-    TopologyMessage msg;
-    auto nodeMsg = msg.mutable_node_changes()->Add();
-    nodeMsg->set_id(mNodeId);
-    nodeMsg->set_op(NodeOperation::JOIN);
-    nodeMsg->set_name(mName);
-    nodeMsg->set_address(oss.str());
-    mStore->ApplyUpdate(msg);
-
     mMainThread = std::thread([this]() { MainLoop(); });
 }
 
@@ -101,6 +93,18 @@ void TopologyManager::MainLoop() {
                 mOnUnsubscribe(topic);
         }
     };
+
+    {
+        // send update about ourself
+        TopologyMessage msg;
+        auto nodeMsg = msg.mutable_node_changes()->Add();
+        nodeMsg->set_id(mNodeId);
+        nodeMsg->set_op(NodeOperation::JOIN);
+        nodeMsg->set_name(mName);
+        nodeMsg->set_address(mAddress);
+        mStore->ApplyUpdate(msg);
+        mOnJoin(*nodeMsg);
+    }
 
     while (!mShutdown) {
         mClient = UDSClient::Create(mAnnouncePath, onMessage);
