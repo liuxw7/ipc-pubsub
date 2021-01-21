@@ -76,13 +76,11 @@ int UDSClient::LoopUntilShutdown() {
     // now that we are connected field events from leader OR shutdown event
     // wait for it to close or shutdown event
     while (1) {
-        SPDLOG_INFO("Begin poll, {}", mFd);
         int ret = poll(fds, 2, -1);
         if (ret < 0) {
             SPDLOG_ERROR("Failed to Poll: {}", strerror(errno));
             return -1;
         }
-        SPDLOG_INFO("Polled [1] {:x} [2] {:x}", fds[0].revents, fds[1].revents);
 
         if (fds[0].revents != 0) {
             SPDLOG_INFO("Polled shutdown");
@@ -92,7 +90,6 @@ int UDSClient::LoopUntilShutdown() {
         }
 
         if (fds[1].revents != 0) {
-            SPDLOG_INFO("Polled input: {:x}", fds[1].revents);
             if (fds[1].revents & POLLERR) {
                 SPDLOG_ERROR("error");
                 return -1;
@@ -105,9 +102,9 @@ int UDSClient::LoopUntilShutdown() {
                 return -1;
             } else if (fds[1].revents & POLLIN) {
                 // socket has data, read it
-                uint8_t buffer[1024];
+                uint8_t buffer[UINT16_MAX];
                 SPDLOG_INFO("onData");
-                int64_t nBytes = read(mFd, buffer, 1024);
+                int64_t nBytes = read(mFd, buffer, UINT16_MAX);
                 if (nBytes < 0) {
                     SPDLOG_ERROR("Error reading: {}", strerror(errno));
                 } else {

@@ -52,6 +52,8 @@ class TopologyManager {
     std::mutex mMtx;
     std::unordered_map<uint64_t, std::shared_ptr<Node>> mNodeById;
 
+    std::string mAddress;
+    std::string mName;
     uint64_t mNodeId;
 
     std::thread mMainThread;
@@ -59,11 +61,12 @@ class TopologyManager {
     // not necessarily running, but one TopologyManager will create one and
     // if the client drops it will attempt to create a new server
     std::shared_ptr<TopologyServer> mServer;
-    std::shared_ptr<TopologyStore> mStore;
 
     // Handles New Topology Updates and can send our entry / exit / publish / subscribe
     // messages
     std::shared_ptr<UDSClient> mClient;
+
+    std::shared_ptr<TopologyStore> mStore;
 
     // Callbacks
     NodeChangeHandler mOnJoin;

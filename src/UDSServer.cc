@@ -105,12 +105,10 @@ int UDSServer::LoopUntilShutdown() {
         }
 
         // read client file descriptors
-        SPDLOG_INFO("Begin poll {} fds", pollFds.size());
         if (int ret = poll(pollFds.data(), pollFds.size(), -1); ret < 0) {
             perror("Failed to poll");
             return -1;
         }
-        SPDLOG_INFO("Polled [1] {:x} [2] {:x}", pollFds[0].revents, pollFds[1].revents);
 
         if (pollFds[0].revents != 0) {
             // shutdown event received, exit
@@ -133,11 +131,9 @@ int UDSServer::LoopUntilShutdown() {
         for (size_t i = 2; i < pollFds.size(); ++i) {
             if (pollFds[i].revents == 0) {
                 // no event for the filedescriptor
-                SPDLOG_INFO("Empty poll");
                 continue;
             }
 
-            SPDLOG_INFO("Polled input: {:x}", pollFds[i].revents);
             if ((pollFds[i].revents & POLLIN) != 0) {
                 uint8_t buffer[UINT16_MAX];
                 int64_t nBytes = read(pollFds[i].fd, buffer, UINT16_MAX);
