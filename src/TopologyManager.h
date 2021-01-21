@@ -49,9 +49,6 @@ class TopologyManager {
     std::atomic_bool mShutdown = false;
     std::string mAnnouncePath;
 
-    std::mutex mMtx;
-    std::unordered_map<uint64_t, std::shared_ptr<Node>> mNodeById;
-
     std::string mAddress;
     std::string mName;
     uint64_t mNodeId;
