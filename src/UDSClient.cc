@@ -2,6 +2,7 @@
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -14,7 +15,7 @@
 
 #include "Utils.h"
 
-std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath) {
+std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath, OnDataCallback onData) {
     struct sockaddr_un addr;
     assert(!sockPath.empty());
     assert(sockPath.size() + 1 < sizeof(addr.sun_path));
@@ -36,16 +37,36 @@ std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath) {
         return nullptr;
     }
 
+    int shutdownFd = eventfd(0, EFD_SEMAPHORE);
+    if (shutdownFd == -1) {
+        perror("Failed to create event!");
+        return nullptr;
+    }
+
     SPDLOG_INFO("Connected with {}", fd);
-    return std::make_shared<UDSClient>(fd);
+    return std::make_shared<UDSClient>(fd, shutdownFd, onData);
 }
 
-UDSClient::UDSClient(int fd) : mFd(fd) {}
+UDSClient::UDSClient(int fd, int shutdownFd, OnDataCallback onData)
+    : mFd(fd), mShutdownFd(shutdownFd), mOnData(onData) {
+    mMainThread = std::thread([this]() { LoopUntilShutdown(); });
+}
 
-int UDSClient::LoopUntilShutdown(int shutdownEventFd,
-                                 std::function<void(size_t, uint8_t*)> onData) {
+UDSClient::~UDSClient() {
+    Shutdown();
+    Wait();
+}
+
+void UDSClient::Shutdown() {
+    uint64_t data = 1;
+    write(mShutdownFd, &data, sizeof(data));
+}
+
+void UDSClient::Wait() { mMainThread.join(); }
+
+int UDSClient::LoopUntilShutdown() {
     struct pollfd fds[2];
-    fds[0].fd = shutdownEventFd;
+    fds[0].fd = mShutdownFd;
     fds[0].events = POLLIN;
     fds[0].revents = 0;
 
@@ -72,17 +93,7 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
 
         if (fds[1].revents != 0) {
             SPDLOG_INFO("Polled input: {:x}", fds[1].revents);
-            if (fds[1].revents & POLLIN) {
-                // socket has data, read it
-                uint8_t buffer[1024];
-                SPDLOG_INFO("onData");
-                int64_t nBytes = read(mFd, buffer, 1024);
-                if (nBytes < 0) {
-                    SPDLOG_ERROR("Error reading: {}", strerror(errno));
-                } else {
-                    onData(nBytes, buffer);
-                }
-            } else if (fds[1].revents & POLLERR) {
+            if (fds[1].revents & POLLERR) {
                 SPDLOG_ERROR("error");
                 return -1;
             } else if (fds[1].revents & POLLHUP) {
@@ -92,6 +103,16 @@ int UDSClient::LoopUntilShutdown(int shutdownEventFd,
             } else if (fds[1].revents & POLLNVAL) {
                 SPDLOG_INFO("File descriptor not open");
                 return -1;
+            } else if (fds[1].revents & POLLIN) {
+                // socket has data, read it
+                uint8_t buffer[1024];
+                SPDLOG_INFO("onData");
+                int64_t nBytes = read(mFd, buffer, 1024);
+                if (nBytes < 0) {
+                    SPDLOG_ERROR("Error reading: {}", strerror(errno));
+                } else {
+                    if (mOnData) mOnData(nBytes, buffer);
+                }
             }
         }
     }

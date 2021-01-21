@@ -2,6 +2,7 @@
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -12,7 +13,8 @@
 
 #include "Utils.h"
 
-std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath) {
+std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath, ConnHandler onConnect,
+                                             ConnHandler onDisconnect, DataHandler onData) {
     struct sockaddr_un addr;
     assert(!sockPath.empty());
     assert(sockPath.size() + 1 < sizeof(addr.sun_path));
@@ -46,19 +48,40 @@ std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath) {
         return nullptr;
     }
 
-    return std::make_shared<UDSServer>(sockFd);
+    int shutdownFd = eventfd(0, EFD_SEMAPHORE);
+    if (shutdownFd == -1) {
+        perror("Failed to create event!");
+        return nullptr;
+    }
+
+    return std::make_shared<UDSServer>(sockFd, shutdownFd, onConnect, onDisconnect, onData);
 }
 
-UDSServer::UDSServer(int fd) : mListenFd(fd) {}
+UDSServer::UDSServer(int fd, int shutdownFd, ConnHandler onConnect, ConnHandler onDisconnect,
+                     DataHandler onData)
+    : mListenFd(fd),
+      mShutdownFd(shutdownFd),
+      mOnConnect(onConnect),
+      mOnDisconnect(onDisconnect),
+      mOnData(onData) {
+    mMainThread = std::thread([this]() { LoopUntilShutdown(); });
+}
 
-int UDSServer::LoopUntilShutdown(int shutdownEventFd, std::function<void(int)> onConnect,
-                                 std::function<void(int)> onDisconnect,
-                                 std::function<void(int, size_t, uint8_t*)> onData) {
-    // std::unordered_map<int, uint64_t> fdToNodeId;
-    // std::unordered_map<uint64_t, int> nodeIdToFd;
+UDSServer::~UDSServer() {
+    Shutdown();
+    Wait();
+}
 
+void UDSServer::Shutdown() {
+    uint64_t data = 1;
+    write(mShutdownFd, &data, sizeof(data));
+}
+
+void UDSServer::Wait() { mMainThread.join(); }
+
+int UDSServer::LoopUntilShutdown() {
     std::vector<pollfd> pollFds(2);
-    pollFds[0].fd = shutdownEventFd;
+    pollFds[0].fd = mShutdownFd;
     pollFds[0].events = POLLIN;
 
     pollFds[1].fd = mListenFd;
@@ -103,7 +126,7 @@ int UDSServer::LoopUntilShutdown(int shutdownEventFd, std::function<void(int)> o
             } else {
                 std::lock_guard<std::mutex> lk(mMtx);
                 mClients.emplace(newClientFd);
-                onConnect(newClientFd);
+                if (mOnConnect) mOnConnect(newClientFd);
             }
         }
 
@@ -118,9 +141,10 @@ int UDSServer::LoopUntilShutdown(int shutdownEventFd, std::function<void(int)> o
             if ((pollFds[i].revents & POLLIN) != 0) {
                 uint8_t buffer[UINT16_MAX];
                 int64_t nBytes = read(pollFds[i].fd, buffer, UINT16_MAX);
-                onData(pollFds[i].fd, nBytes, buffer);
-            } else if ((pollFds[i].revents & (POLLHUP | POLLRDHUP)) != 0) {
-                onDisconnect(pollFds[i].fd);
+                if (mOnData) mOnData(pollFds[i].fd, nBytes, buffer);
+            }
+            if ((pollFds[i].revents & (POLLHUP | POLLRDHUP)) != 0) {
+                if (mOnDisconnect) mOnDisconnect(pollFds[i].fd);
                 std::lock_guard<std::mutex> lk(mMtx);
                 mClients.erase(pollFds[i].fd);
             }

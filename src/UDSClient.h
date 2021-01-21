@@ -3,13 +3,18 @@
 
 #include <functional>
 #include <memory>
+#include <thread>
 
 class UDSClient {
    public:
-    static std::shared_ptr<UDSClient> Create(std::string_view sockPath);
-    UDSClient(int fd);
+    using OnDataCallback = std::function<void(int64_t, uint8_t*)>;
+    static std::shared_ptr<UDSClient> Create(std::string_view sockPath,
+                                             OnDataCallback onData = nullptr);
+    UDSClient(int fd, int shutdownFd, OnDataCallback onData = nullptr);
+    ~UDSClient();
 
-    int LoopUntilShutdown(int shutdownFd, std::function<void(size_t, uint8_t*)> onData);
+    void Wait();
+    void Shutdown();
 
     // send to client with the given file descriptor
     int64_t Send(size_t len, uint8_t* message);
@@ -23,5 +28,10 @@ class UDSClient {
     }
 
    private:
+    int LoopUntilShutdown();
+
     int mFd = -1;
+    int mShutdownFd = -1;
+    std::function<void(int64_t, uint8_t*)> mOnData;
+    std::thread mMainThread;
 };

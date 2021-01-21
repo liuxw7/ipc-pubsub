@@ -20,12 +20,35 @@ cc_binary(
 )
 
 cc_library(
+    name = "TopologyStore",
+    srcs = ["TopologyStore.cc"],
+    hdrs = ["TopologyStore.h"],
+    deps = [
+        "//protos:index_cc_proto",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
+)
+
+cc_library(
+    name = "TopologyServer",
+    srcs = ["TopologyServer.cc"],
+    hdrs = ["TopologyServer.h"],
+    deps = [
+        ":TopologyStore",
+        ":UDSServer",
+        ":Utils",
+        "//protos:index_cc_proto",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
+)
+
+cc_library(
     name = "TopologyManager",
     srcs = ["TopologyManager.cc"],
     hdrs = ["TopologyManager.h"],
     deps = [
+        ":TopologyServer",
         ":UDSClient",
-        ":UDSServer",
         ":Utils",
         "//protos:index_cc_proto",
         "@com_github_gabime_spdlog//:spdlog",

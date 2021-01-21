@@ -44,8 +44,9 @@ enum NodeOperation {
 enum TopicOperation {
   TOPIC_UNSET = 0;
   ANNOUNCE = 1; // i.e. I'm going to publish
-  SUBSCRIBE = 2;
-  UNSUBSCRIBE = 3;
+  RETRACT = 2;  // i.e. I won't publish again
+  SUBSCRIBE = 3;
+  UNSUBSCRIBE = 4;
 };
 
 message NodeChange {
