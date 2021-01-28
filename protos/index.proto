@@ -1,39 +1,16 @@
 syntax = "proto3";
 
 package ipc_pubsub;
-message InFlight {
+
+// Storage for actual IPC messages, may contain inline data
+message MetadataMessage {
   string topic = 1;
 
-  // shared memory containing the data
-  string payload_name = 2;
+  // if the message is small then it will be inlined here
+  bytes inlined = 2;
+
+  // TODO(micah) add send timestamp
 };
-
-message Node {
-  string name = 1;
-  uint64 id = 2;
-  string notify = 3; // name of OS semaphore to up when sending a message
-  int32 pid = 4;     // used to clean up dead nodes
-
-  // Messages that need to be processed
-  repeated InFlight in_flight = 10;
-};
-
-message Topic {
-  string name = 1;
-
-  // if the topic contains protobuf then this will be the type infor otherwise
-  // a mimetype
-  string mime = 2;
-
-  // node ids of topic users
-  repeated uint64 publishers = 3;
-  repeated uint64 subscribers = 4;
-};
-
-message Index {
-  repeated Node nodes = 1;
-  repeated Topic topics = 2;
-}
 
 enum NodeOperation {
   NODE_UNSET = 0;
@@ -65,6 +42,13 @@ message TopicChange {
 };
 
 message TopologyMessage {
-  repeated NodeChange node_changes = 1;
-  repeated TopicChange topic_changes = 2;
+  // sequences are minted by the server, when sending from client to server seq
+  // should be 0, in a message containing a digest, the seq will be the maximum
+  // value in the digest
+  uint64 seq = 1;
+
+  oneof Op {
+    NodeChange node_change = 3;
+    TopicChange topic_change = 4;
+  };
 };

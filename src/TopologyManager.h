@@ -8,7 +8,6 @@
 #include "protos/index.pb.h"
 
 class TopologyServer;
-class TopologyStore;
 class UDSServer;
 class UDSClient;
 
@@ -17,16 +16,21 @@ class TopologyManager {
     using NodeChangeHandler = std::function<void(const ipc_pubsub::NodeChange&)>;
     using TopicChangeHandler = std::function<void(const ipc_pubsub::TopicChange&)>;
 
-    TopologyManager(std::string_view announcePath, std::string_view name,
-                    NodeChangeHandler onJoin = nullptr, NodeChangeHandler onLeave = nullptr,
-                    TopicChangeHandler onAnnounce = nullptr, TopicChangeHandler onRecant = nullptr,
-                    TopicChangeHandler onSubscribe = nullptr,
+    TopologyManager(std::string_view groupName, std::string_view nodeName, uint64_t nodeId,
+                    std::string_view dataPath, NodeChangeHandler onJoin = nullptr,
+                    NodeChangeHandler onLeave = nullptr, TopicChangeHandler onAnnounce = nullptr,
+                    TopicChangeHandler onRecant = nullptr, TopicChangeHandler onSubscribe = nullptr,
                     TopicChangeHandler onUnsubscribe = nullptr);
 
+    void Shutdown();
     ~TopologyManager();
     void Apply(const ipc_pubsub::TopologyMessage& msg);
     ipc_pubsub::TopologyMessage GetNodeMessage(uint64_t nodeId);
     ipc_pubsub::TopologyMessage GetClientDescriptionMessage(int fd);
+    void Announce(std::string_view topic, std::string_view mime);
+    void Retract(std::string_view topic);
+    void Subscribe(std::string_view topic);
+    void Unsubscribe(std::string_view topic);
 
     struct Publication {
         std::string name;
@@ -42,16 +46,21 @@ class TopologyManager {
 
    private:
     void MainLoop();
+    void SetNewClient(std::shared_ptr<UDSClient>);
     std::shared_ptr<UDSClient> CreateClient();
     void ApplyUpdate(const ipc_pubsub::TopologyMessage& msg);
 
-    int mShutdownFd = -1;
+    std::mutex mMtx;
     std::atomic_bool mShutdown = false;
-    std::string mAnnouncePath;
+    std::vector<ipc_pubsub::TopologyMessage> mHistory;
 
-    std::string mAddress;
-    std::string mName;
-    uint64_t mNodeId;
+    const uint64_t mNodeId;
+    const std::string mAnnouncePath;
+    const std::string mAddress;
+    const std::string mGroupName;
+    const std::string mName;
+
+    std::unordered_map<uint64_t, Node> mNodes;
 
     std::thread mMainThread;
 
@@ -63,13 +72,11 @@ class TopologyManager {
     // messages
     std::shared_ptr<UDSClient> mClient;
 
-    std::shared_ptr<TopologyStore> mStore;
-
     // Callbacks
-    NodeChangeHandler mOnJoin;
-    NodeChangeHandler mOnLeave;
-    TopicChangeHandler mOnAnnounce;
-    TopicChangeHandler mOnRetract;
-    TopicChangeHandler mOnSubscribe;
-    TopicChangeHandler mOnUnsubscribe;
+    const NodeChangeHandler mOnJoin;
+    const NodeChangeHandler mOnLeave;
+    const TopicChangeHandler mOnAnnounce;
+    const TopicChangeHandler mOnRetract;
+    const TopicChangeHandler mOnSubscribe;
+    const TopicChangeHandler mOnUnsubscribe;
 };

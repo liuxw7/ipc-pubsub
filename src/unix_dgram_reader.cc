@@ -15,11 +15,11 @@
  * };
  */
 
-int streamversion() {
+static int streamversion() {
     const std::string NAME = "socket";
     struct sockaddr_un addr;
     char buf[100];
-    int fd, cl, rc;
+    int64_t fd, cl, rc;
 
     const char* socket_path = "socket";
 
@@ -38,45 +38,44 @@ int streamversion() {
         unlink(socket_path);
     }
 
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (bind(int(fd), reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
         perror("bind error");
         exit(-1);
     }
 
-    if (listen(fd, 5) == -1) {
+    if (listen(int(fd), 5) == -1) {
         perror("listen error");
         exit(-1);
     }
 
     while (1) {
-        if ((cl = accept(fd, NULL, NULL)) == -1) {
+        if ((cl = accept(int(fd), nullptr, nullptr)) == -1) {
             perror("accept error");
             continue;
         }
 
-        while ((rc = read(cl, buf, sizeof(buf))) > 0) {
-            printf("read %u bytes: %.*s\n", rc, rc, buf);
+        while ((rc = read(int(cl), buf, sizeof(buf))) > 0) {
+            std::cout << "read " << rc << " bytes: " << buf << std::endl;
         }
         if (rc == -1) {
             perror("read");
             exit(-1);
         } else if (rc == 0) {
             printf("EOF\n");
-            close(cl);
+            close(int(cl));
         }
     }
-
-    return 0;
 }
 /*
  * This program creates a UNIX domain datagram socket, binds a name to it,
  * then reads from the socket.
  */
-int sequence_version() {
+static int sequence_version() {
     const std::string NAME = "socket";
     struct sockaddr_un addr;
     char buf[100];
-    int fd, cl, rc;
+    int fd;
+    int64_t cl, rc;
 
     const char* socket_path = "socket";
 
@@ -95,25 +94,25 @@ int sequence_version() {
         unlink(socket_path);
     }
 
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (bind(int(fd), reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
         perror("bind error");
         exit(-1);
     }
 
-    if (listen(fd, 5) == -1) {
+    if (listen(int(fd), 5) == -1) {
         perror("listen error");
         exit(-1);
     }
 
     while (1) {
-        if ((cl = accept(fd, NULL, NULL)) == -1) {
+        if ((cl = accept(fd, nullptr, nullptr)) == -1) {
             perror("accept error");
             continue;
         }
 
         while (true) {
             pollfd pfd;
-            pfd.fd = cl;
+            pfd.fd = int(cl);
             // pfd.events = pfd.revents = 0;
             pfd.events = POLLIN;
             if (int ret = poll(&pfd, 1, 10000); ret < 0) {
@@ -122,24 +121,22 @@ int sequence_version() {
             }
             printf("poll result: %2x\n", pfd.revents);
 
-            rc = recv(cl, buf, sizeof(buf), 0);
-            printf("read %u bytes: ", rc);
-            for (int i = 0; i < rc; ++i) printf("%02x", buf[i]);
-            printf("\n");
-        }
-        if (rc == -1) {
-            perror("read");
-            exit(-1);
-        } else if (rc == 0) {
-            printf("EOF\n");
-            close(cl);
+            rc = recv(int(cl), buf, sizeof(buf), 0);
+            if (rc == -1) {
+                perror("read");
+                exit(-1);
+            } else if (rc == 0) {
+                printf("EOF\n");
+                close(int(cl));
+            }
+            std::cout << "read " << rc << " bytes: ";
+            for (int i = 0; i < rc; ++i) std::cout << std::hex << buf[i];
+            std::cout << std::endl;
         }
     }
-
-    return 0;
 }
 
-int datagramversion() {
+static int datagramversion() {
     const std::string NAME = "socket";
 
     int sock;
@@ -167,15 +164,16 @@ int datagramversion() {
     /* Read from the socket */
     while (true) {
         if (read(sock, buf, 1024) < 0) perror("receiving datagram packet");
-        printf("-->%s\n", buf);
+        std::cout << "--> " << buf << std::endl;
     }
-    close(sock);
-    // unlink(NAME.c_str());
-    return 0;
 }
 
-int main() {
-    // return streamversion();
-    // return datagramversion();
-    return sequence_version();
+int main(int argc, char** argv) {
+    if (argc == 1 || strcmp(argv[1], "stream") == 0) {
+        return streamversion();
+    } else if (strcmp(argv[1], "datagram") == 0) {
+        return datagramversion();
+    } else if (strcmp(argv[1], "sequence") == 0) {
+        return sequence_version();
+    }
 }

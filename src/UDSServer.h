@@ -21,14 +21,16 @@ class UDSServer {
     void Wait();
 
    private:
-    int LoopUntilShutdown();
-    std::mutex mMtx;
-    int mListenFd = -1;
-    std::unordered_set<int> mClients;
-    int mShutdownFd = -1;
-    ConnHandler mOnConnect;
-    ConnHandler mOnDisconnect;
-    DataHandler mOnData;
+    void MainLoop();
 
+    // Clients and filedescriptors only get changed on
+    std::mutex mMtx;
+    std::unordered_set<int> mClients;
+    int mListenFd = -1;
+    int mShutdownFd = -1;
+
+    const ConnHandler mOnConnect;
+    const ConnHandler mOnDisconnect;
+    const DataHandler mOnData;
     std::thread mMainThread;
 };

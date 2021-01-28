@@ -4,9 +4,14 @@ build --incompatible_strict_action_env
 build --cxxopt=-std=c++20
 build --cxxopt=-Wall
 build --cxxopt=-Weverything
-build --cxxopt=-Wno-c++98-compat
-build --cxxopt=-Wno-zero-length-array
+#build --cxxopt=-Wno-c++98-compat
+#build --cxxopt=-Wno-zero-length-array
 build --cxxopt=-Wno-padded
+build --cxxopt=-Wno-exit-time-destructors
+#build --cxxopt=-Wno-suggest-destructor-override
+build --cxxopt=-Wno-global-constructors
+#build --cxxopt=-Wno-zero-as-null-pointer-constant
+#build --cxxopt=-Wno-double-promotion
 
 # so that protobuf doesn't trigger warnings
 build --cxxopt=-Wno-c++98-compat-pedantic

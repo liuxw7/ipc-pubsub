@@ -9,8 +9,10 @@ class UDSClient {
    public:
     using OnDataCallback = std::function<void(int64_t, uint8_t*)>;
     static std::shared_ptr<UDSClient> Create(std::string_view sockPath,
-                                             OnDataCallback onData = nullptr);
-    UDSClient(int fd, int shutdownFd, OnDataCallback onData = nullptr);
+                                             OnDataCallback onData = nullptr,
+                                             std::function<void()> onDisconnect = nullptr);
+    UDSClient(int fd, int shutdownFd, OnDataCallback onData = nullptr,
+              std::function<void()> onDisconnect = nullptr);
     ~UDSClient();
 
     void Wait();
@@ -28,10 +30,18 @@ class UDSClient {
     }
 
    private:
-    int LoopUntilShutdown();
+    // MainThread calls MainLoop()
+    void MainLoop();
 
-    int mFd = -1;
-    int mShutdownFd = -1;
-    std::function<void(int64_t, uint8_t*)> mOnData;
+    const std::function<void(int64_t, uint8_t*)> mOnData;
+
+    // Called at end of MainLoop
+    const std::function<void()> mOnDisconnect;
+
+    // Closed at end of MainLoop, once shutdown mFd will be -1
+    std::mutex mMtx;
+    int mFd;
+    int mShutdownFd;
+
     std::thread mMainThread;
 };

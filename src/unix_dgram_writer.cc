@@ -4,6 +4,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -13,11 +14,11 @@
  * line arguments.  The form of the command line is <programname> <pathname>
  */
 
-int streamversion() {
+static int streamversion() {
     const char* socket_path = "socket";
     struct sockaddr_un addr;
     char buf[100];
-    int fd, rc;
+    int64_t fd, rc;
 
     if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
         perror("socket error");
@@ -33,13 +34,13 @@ int streamversion() {
         strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
     }
 
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (connect(int(fd), reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
         perror("connect error");
         exit(-1);
     }
 
     while ((rc = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
-        if (write(fd, buf, rc) != rc) {
+        if (write(int(fd), buf, rc) != rc) {
             if (rc > 0)
                 fprintf(stderr, "partial write");
             else {
@@ -52,11 +53,11 @@ int streamversion() {
     return 0;
 }
 
-int sequence_version() {
+static int sequence_version() {
     const char* socket_path = "socket";
     struct sockaddr_un addr;
     char buf[100];
-    int fd, rc, bts;
+    int64_t fd, rc, bts;
 
     if ((fd = socket(AF_UNIX, SOCK_SEQPACKET, 0)) == -1) {
         perror("socket error");
@@ -72,22 +73,22 @@ int sequence_version() {
         strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
     }
 
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (connect(int(fd), reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
         perror("connect error");
         exit(-1);
     }
 
     while ((rc = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
-        printf("read %u bytes: ", rc);
-        for (int i = 0; i < rc; ++i) printf("%02x", buf[i]);
-        printf("\n");
-        if ((bts = write(fd, buf, rc)) != rc) {
+        std::cout << "read " << rc << " bytes: ";
+        for (int i = 0; i < rc; ++i) std::cout << std::hex << std::setw(2) << buf[i];
+        std::cout << std::endl;
+        if ((bts = write(int(fd), buf, rc)) != rc) {
             // if ((bts = sendmsg(fd, &msg, 0)) != rc) {
             if (bts < 0) {
                 perror("Error");
             }
             if (rc > 0)
-                fprintf(stderr, "partial write: %i", bts);
+                std::cerr << "partial write: " << bts << std::endl;
             else {
                 perror("write error");
                 exit(-1);
@@ -98,7 +99,7 @@ int sequence_version() {
     return 0;
 }
 
-int datagramversion() {
+static int datagramversion() {
     const std::string NAME = "socket";
     const std::string DATA = "The sea is calm tonight, the tide is full . . .";
     int sock;
@@ -124,10 +125,15 @@ int datagramversion() {
         sleep(1);
     }
     close(sock);
+    return 0;
 }
 
-int main() {
-    // return streamversion();
-    return sequence_version();
-    // return datagramversion();
+int main(int argc, char** argv) {
+    if (argc == 1 || strcmp(argv[1], "stream") == 0) {
+        return streamversion();
+    } else if (strcmp(argv[1], "datagram") == 0) {
+        return datagramversion();
+    } else if (strcmp(argv[1], "sequence") == 0) {
+        return sequence_version();
+    }
 }

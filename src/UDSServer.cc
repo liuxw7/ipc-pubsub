@@ -64,22 +64,46 @@ UDSServer::UDSServer(int fd, int shutdownFd, ConnHandler onConnect, ConnHandler 
       mOnConnect(onConnect),
       mOnDisconnect(onDisconnect),
       mOnData(onData) {
-    mMainThread = std::thread([this]() { LoopUntilShutdown(); });
+    mMainThread = std::thread([this]() { MainLoop(); });
 }
 
 UDSServer::~UDSServer() {
     Shutdown();
     Wait();
+    mMainThread.join();
 }
 
 void UDSServer::Shutdown() {
-    uint64_t data = 1;
-    write(mShutdownFd, &data, sizeof(data));
+    std::scoped_lock<std::mutex> lk(mMtx);
+    if (mShutdownFd != -1) {
+        // Since this is a semaphore type there could be up to UINT32_MAX Wait()
+        // calls running simultaneously before we run into issues
+        // The only reason I didn't use UINT64_MAX was because I am worried about
+        // rollovers
+        uint64_t data = UINT32_MAX;
+        write(mShutdownFd, &data, sizeof(data));
+    }
 }
 
-void UDSServer::Wait() { mMainThread.join(); }
+void UDSServer::Wait() {
+    struct pollfd fds[1];
+    {
+        std::scoped_lock<std::mutex> lk(mMtx);
+        if (mShutdownFd == -1) {
+            return;
+        }
+        fds[0].fd = mShutdownFd;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+    }
 
-int UDSServer::LoopUntilShutdown() {
+    // wait for shutdown signal, we don't particularly care if this fails (for instance if
+    // mShutdownFd gets closed / set to -1 in between the locked section and here), the point
+    // is if it is still valid to block until its triggered
+    poll(fds, 1, -1);
+}
+
+void UDSServer::MainLoop() {
     std::vector<pollfd> pollFds(2);
     pollFds[0].fd = mShutdownFd;
     pollFds[0].events = POLLIN;
@@ -107,12 +131,12 @@ int UDSServer::LoopUntilShutdown() {
         // read client file descriptors
         if (int ret = poll(pollFds.data(), pollFds.size(), -1); ret < 0) {
             perror("Failed to poll");
-            return -1;
+            break;
         }
 
         if (pollFds[0].revents != 0) {
             // shutdown event received, exit
-            return 0;
+            break;
         }
 
         if (pollFds[1].revents != 0) {
@@ -120,10 +144,12 @@ int UDSServer::LoopUntilShutdown() {
             int newClientFd = accept(mListenFd, nullptr, nullptr);
             if (newClientFd == -1) {
                 perror("accept error");
-                return -1;
+                break;
             } else {
-                std::lock_guard<std::mutex> lk(mMtx);
-                mClients.emplace(newClientFd);
+                {
+                    std::lock_guard<std::mutex> lk(mMtx);
+                    mClients.emplace(newClientFd);
+                }
                 if (mOnConnect) mOnConnect(newClientFd);
             }
         }
@@ -137,7 +163,14 @@ int UDSServer::LoopUntilShutdown() {
             if ((pollFds[i].revents & POLLIN) != 0) {
                 uint8_t buffer[UINT16_MAX];
                 int64_t nBytes = read(pollFds[i].fd, buffer, UINT16_MAX);
-                if (mOnData) mOnData(pollFds[i].fd, nBytes, buffer);
+                if (nBytes == -1) {
+                    strerror_r(errno, reinterpret_cast<char*>(buffer), UINT16_MAX);
+                    SPDLOG_ERROR("Error reading: '{}'", buffer);
+                } else if (nBytes == 0) {
+                    SPDLOG_ERROR("Empty");
+                } else if (mOnData) {
+                    mOnData(pollFds[i].fd, nBytes, buffer);
+                }
             }
             if ((pollFds[i].revents & (POLLHUP | POLLRDHUP)) != 0) {
                 if (mOnDisconnect) mOnDisconnect(pollFds[i].fd);
@@ -146,4 +179,18 @@ int UDSServer::LoopUntilShutdown() {
             }
         }
     }
+
+    // ensure Wait knows we are killing this
+    uint64_t data = UINT32_MAX;
+    write(mShutdownFd, &data, sizeof(data));
+
+    std::scoped_lock<std::mutex> lk(mMtx);
+    close(mListenFd);
+    close(mShutdownFd);
+    mListenFd = -1;
+    mShutdownFd = -1;
+    for (const int client : mClients) {
+        close(client);
+    }
+    mClients.clear();
 }

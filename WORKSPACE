@@ -35,3 +35,13 @@ http_archive(
     strip_prefix = "fmt-%s" % FMTLIB_VERSION,
     urls = ["https://github.com/fmtlib/fmt/releases/download/%s/fmt-%s.zip" % (FMTLIB_VERSION, FMTLIB_VERSION)],
 )
+
+http_archive(
+    name = "gtest",
+    build_file = "@com_github_micahcc_ipc_pubsub//bazel/external:gtest.BUILD",
+    sha256 = "9dc9157a9a1551ec7a7e43daea9a694a0bb5fb8bec81235d8a1e6ef64c716dcb",
+    strip_prefix = "googletest-release-1.10.0",
+    urls = [
+        "https://github.com/google/googletest/archive/release-1.10.0.tar.gz",
+    ],
+)
