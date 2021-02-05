@@ -49,7 +49,13 @@ class TopologyManager {
     void SetNewClient(std::shared_ptr<UDSClient>);
     std::shared_ptr<UDSClient> CreateClient();
     void ApplyUpdate(const ipc_pubsub::TopologyMessage& msg);
+    void ApplyUpdate(uint64_t len, uint8_t* data);
+    void IntroduceOurselves(std::shared_ptr<UDSClient>);
 
+    // TODO server could prune nodes from history once they leave and everyone is
+    // up-to-date, but the server would have to send a prune notification otherwise
+    // it wouldn't have a lasting effect.
+    // Clients are probably free to prune immediately
     std::mutex mMtx;
     std::atomic_bool mShutdown = false;
     std::vector<ipc_pubsub::TopologyMessage> mHistory;
@@ -63,14 +69,6 @@ class TopologyManager {
     std::unordered_map<uint64_t, Node> mNodes;
 
     std::thread mMainThread;
-
-    // not necessarily running, but one TopologyManager will create one and
-    // if the client drops it will attempt to create a new server
-    std::shared_ptr<TopologyServer> mServer;
-
-    // Handles New Topology Updates and can send our entry / exit / publish / subscribe
-    // messages
-    std::shared_ptr<UDSClient> mClient;
 
     // Callbacks
     const NodeChangeHandler mOnJoin;

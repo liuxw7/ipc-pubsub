@@ -53,18 +53,6 @@ TopologyManager::TopologyManager(std::string_view groupName, std::string_view no
 void TopologyManager::Shutdown() {
     // Destroying the server and client should be sufficient to trigger their shutdown
     mShutdown = true;
-
-    // copy client and server to prevent races with the main thread
-    auto client = mClient;
-    auto server = mServer;
-
-    // shuting threse down will cause the main loop to stop running them and
-    // check mShutdown
-    if (client) client->Shutdown();
-    if (server) server->Shutdown();
-
-    mClient = nullptr;
-    mServer = nullptr;
 }
 
 TopologyManager::~TopologyManager() {
@@ -72,9 +60,22 @@ TopologyManager::~TopologyManager() {
     mMainThread.join();
 }
 
+void TopologyManager::ApplyUpdate(size_t len, uint8_t* data) {
+    TopologyMessage outerMsg;
+    outerMsg.ParseFromArray(data, int(len));
+    SPDLOG_INFO("{} Recieved :\n{}", mName, outerMsg.DebugString());
+    ApplyUpdate(outerMsg);
+}
+
 void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
     std::unique_lock<std::mutex> lk(mMtx);
-    mHistory.push_back(msg);
+
+    auto it = std::lower_bound(mHistory.begin(), mHistory.end(), msg,
+                               [](const TopologyMessage& lhs, const TopologyMessage& rhs) {
+                                   return lhs.seq() < rhs.seq();
+                               });
+    mHistory.insert(it, msg);
+
     if (msg.has_node_change()) {
         const auto& nodeChange = msg.node_change();
         if (nodeChange.op() == ipc_pubsub::JOIN) {
@@ -136,16 +137,25 @@ void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
         }
     }
 }
-void TopologyManager::SetNewClient(std::shared_ptr<UDSClient> newClient) {
-    std::unique_lock<std::mutex> lk(mMtx);
-    mClient = newClient;
+
+void TopologyManager::IntroduceOurselves(std::shared_ptr<UDSClient> client) {
+    std::lock_guard<std::mutex> lk(mMtx);
+
+    // send our complete history
+    for (const auto& msg : mHistory) {
+        client->Send(msg);
+    }
+
+    // craft messages about ourselves
+    // TODO(micah) this will result in duplicates in the history everywhere, purge unecessary
+    // messages on the server and notify the clients
     TopologyMessage msg;
     auto nodeMsg = msg.mutable_node_change();
     nodeMsg->set_id(mNodeId);
     nodeMsg->set_op(NodeOperation::JOIN);
     nodeMsg->set_name(mName);
     nodeMsg->set_address(mAddress);
-    mClient->Send(msg);
+    client->Send(msg);
 
     // send subscriptions
     auto it = mNodes.find(mNodeId);
@@ -157,42 +167,41 @@ void TopologyManager::SetNewClient(std::shared_ptr<UDSClient> newClient) {
             topicMsg->set_mime(pub.mime);
             topicMsg->set_node_id(mNodeId);
             topicMsg->set_op(ipc_pubsub::ANNOUNCE);
-            mClient->Send(msg);
+            client->Send(msg);
         }
         for (const auto& name : it->second.subscriptions) {
             auto topicMsg = msg.mutable_topic_change();
             topicMsg->set_name(name);
             topicMsg->set_node_id(mNodeId);
             topicMsg->set_op(ipc_pubsub::SUBSCRIBE);
-            mClient->Send(msg);
+            client->Send(msg);
         }
     }
 }
 
 void TopologyManager::MainLoop() {
-    auto onMessage = [this](size_t len, uint8_t* data) {
-        TopologyMessage outerMsg;
-        outerMsg.ParseFromArray(data, int(len));
-        SPDLOG_INFO("{} Recieved :\n{}", mName, outerMsg.DebugString());
-        ApplyUpdate(outerMsg);
-    };
+    // not necessarily running, but one TopologyManager will create one and
+    // if the client drops it will attempt to create a new server
+    std::shared_ptr<TopologyServer> server;
 
     while (!mShutdown) {
-        auto newClient = UDSClient::Create(mAnnouncePath, onMessage);
-        if (newClient != nullptr) {
-            // client connected send our details
-            // send information about ourself
-            SetNewClient(newClient);
+        // try to connect and wait before starting the server, if we fail to create the client then
+        // we'll try to create the server, then go back to creating a client
+        auto client = UDSClient::Create(
+            mAnnouncePath, [this](size_t len, uint8_t* data) { ApplyUpdate(len, data); });
+        if (client != nullptr) {
+            // we're connected send our history so that the server can integrate it
+            IntroduceOurselves(client);
 
-            mClient->Wait();
-            mClient = nullptr;
+            client->Wait();
+            client = nullptr;
         }
 
         if (mShutdown) break;
-        // we don't actually care if the server exists or not, if this fails
-        // it should be because there is another server that the client can
-        // connect to
-        mServer = std::make_shared<TopologyServer>(mAnnouncePath, mHistory);
+        // we don't actually care if this server exists or not, we just need one
+        // servier. If this fails it should be because there is another server
+        // that the client can connect to. We'll seed the server with the clients history
+        server = std::make_shared<TopologyServer>(mAnnouncePath, mHistory);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }

@@ -39,7 +39,8 @@ void TopologyServer::OnConnect(int fd) {
         if (!sent) {
             SPDLOG_ERROR("Failed to send topology");
         }
-        assert(msg.seq() > client.seq);
+        SPDLOG_ERROR("{} vs {}", msg.seq(), client.seq);
+        assert(msg.seq() >= client.seq);
         client.seq = msg.seq();
     }
 
@@ -83,7 +84,6 @@ void TopologyServer::OnData(int fd, int64_t len, uint8_t* data) {
     // notify all clients that a new client has been updated
     TopologyMessage msg;
     msg.ParseFromArray(data, int(len));
-    assert(msg.seq() == 0);  // clients shouldn't send seq
 
     // get an ID out of the message (should only have one, clients should only
     // send information about themselves)
@@ -102,13 +102,24 @@ void TopologyServer::OnData(int fd, int64_t len, uint8_t* data) {
         assert(it != mClients.end());  // should have created when the client connected
         it->second.nodeId = id;
 
-        // mint new seq
-        msg.set_seq(mNextSeq++);
-
-        // add to history
-        mHistory.push_back(msg);
+        // mint new seq and add to history if the message is fresh (no sequence)
+        if (msg.seq() == 0) {
+            msg.set_seq(mNextSeq++);
+            mHistory.push_back(msg);
+        } else {
+            // see if we have this message, if not then insert into history
+            auto it = std::lower_bound(mHistory.begin(), mHistory.end(), msg,
+                                       [](const TopologyMessage& lhs, const TopologyMessage& rhs) {
+                                           return lhs.seq() < rhs.seq();
+                                       });
+            if (it == mHistory.end() || it->seq() != msg.seq()) {
+                // new message, insert
+                mHistory.insert(it, msg);
+            }
+        }
     }
 
+    // ensure all clients are up-to-date with changes
     Broadcast();
 }
 
@@ -151,10 +162,8 @@ TopologyServer::TopologyServer(std::string_view announcePath,
     // On startup the topology server can be provided with a message containing a digest
     // this will be loaded as the starting server state
     mNextSeq = 1;
+    mHistory = digest;
     for (const auto& msg : digest) {
-        assert(msg.seq() != 0);
-        assert(msg.seq() <= mNextSeq);
-        mHistory.push_back(msg);
         mNextSeq = msg.seq() + 1;
     }
 

@@ -160,19 +160,20 @@ void UDSServer::MainLoop() {
                 continue;
             }
 
-            if ((pollFds[i].revents & POLLIN) != 0) {
+            if ((pollFds[i].revents & POLLIN) != 0) {  // 0x01
                 uint8_t buffer[UINT16_MAX];
                 int64_t nBytes = read(pollFds[i].fd, buffer, UINT16_MAX);
                 if (nBytes == -1) {
                     strerror_r(errno, reinterpret_cast<char*>(buffer), UINT16_MAX);
                     SPDLOG_ERROR("Error reading: '{}'", buffer);
                 } else if (nBytes == 0) {
-                    SPDLOG_ERROR("Empty");
+                    SPDLOG_DEBUG("Empty");
                 } else if (mOnData) {
                     mOnData(pollFds[i].fd, nBytes, buffer);
                 }
             }
-            if ((pollFds[i].revents & (POLLHUP | POLLRDHUP)) != 0) {
+            if ((pollFds[i].revents & POLLHUP) != 0) {  // 0x10
+                SPDLOG_ERROR("HANGUP");
                 if (mOnDisconnect) mOnDisconnect(pollFds[i].fd);
                 std::lock_guard<std::mutex> lk(mMtx);
                 mClients.erase(pollFds[i].fd);
