@@ -6,12 +6,13 @@
 
 #include "protos/index.pb.h"
 
+namespace ips {
 class UDSServer;
 
 class TopologyServer {
    public:
     TopologyServer(std::string_view announcePath,
-                   const std::vector<ipc_pubsub::TopologyMessage>& digest = {});
+                   const std::vector<ips::TopologyMessage>& digest = {});
     ~TopologyServer();
     void Shutdown();
 
@@ -34,9 +35,10 @@ class TopologyServer {
     std::unordered_map<int, Client> mClients;
 
     uint64_t mNextSeq = 1;
-    std::vector<ipc_pubsub::TopologyMessage> mHistory;
+    std::vector<ips::TopologyMessage> mHistory;
     std::shared_ptr<UDSServer> mServer;
 
     // calls PurgeDisconnected() one time a fixed time after startup
     std::thread mPurgeThread;
 };
+}  // namespace ips

@@ -2,7 +2,7 @@
 #include <iostream>
 #include <thread>
 
-#include "IPCMessenger.h"
+#include "ips/IPCMessenger.h"
 
 int main() {
     auto node = IPCMessenger::Create("/pingpong2", "ponger");

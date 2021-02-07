@@ -5,6 +5,7 @@
 #include <memory>
 #include <thread>
 
+namespace ips {
 class UDSClient {
    public:
     using OnDataCallback = std::function<void(int64_t, uint8_t*)>;
@@ -45,3 +46,4 @@ class UDSClient {
 
     std::thread mMainThread;
 };
+}  // namespace ips

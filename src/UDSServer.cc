@@ -1,4 +1,4 @@
-#include "UDSServer.h"
+#include "ips/UDSServer.h"
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
@@ -11,8 +11,8 @@
 #include <cassert>
 #include <mutex>
 
-#include "Utils.h"
-
+#include "ips/Utils.h"
+namespace ips {
 std::shared_ptr<UDSServer> UDSServer::Create(std::string_view sockPath, ConnHandler onConnect,
                                              ConnHandler onDisconnect, DataHandler onData) {
     struct sockaddr_un addr;
@@ -195,3 +195,4 @@ void UDSServer::MainLoop() {
     }
     mClients.clear();
 }
+}  // namespace ips

@@ -1,4 +1,4 @@
-#include "TopologyServer.h"
+#include "ips/TopologyServer.h"
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
@@ -17,12 +17,9 @@
 #include <string>
 #include <thread>
 
-#include "UDSServer.h"
+#include "ips/UDSServer.h"
 #include "protos/index.pb.h"
-
-using ipc_pubsub::NodeOperation;
-using ipc_pubsub::TopicOperation;
-using ipc_pubsub::TopologyMessage;
+namespace ips {
 
 void TopologyServer::Shutdown() { mServer->Shutdown(); }
 
@@ -98,9 +95,9 @@ void TopologyServer::OnData(int fd, int64_t len, uint8_t* data) {
     {
         std::lock_guard<std::mutex> lk(mMtx);
 
-        auto it = mClients.find(fd);
-        assert(it != mClients.end());  // should have created when the client connected
-        it->second.nodeId = id;
+        auto cit = mClients.find(fd);
+        assert(cit != mClients.end());  // should have created when the client connected
+        cit->second.nodeId = id;
 
         // mint new seq and add to history if the message is fresh (no sequence)
         if (msg.seq() == 0) {
@@ -108,13 +105,13 @@ void TopologyServer::OnData(int fd, int64_t len, uint8_t* data) {
             mHistory.push_back(msg);
         } else {
             // see if we have this message, if not then insert into history
-            auto it = std::lower_bound(mHistory.begin(), mHistory.end(), msg,
-                                       [](const TopologyMessage& lhs, const TopologyMessage& rhs) {
-                                           return lhs.seq() < rhs.seq();
-                                       });
-            if (it == mHistory.end() || it->seq() != msg.seq()) {
+            auto hit = std::lower_bound(mHistory.begin(), mHistory.end(), msg,
+                                        [](const TopologyMessage& lhs, const TopologyMessage& rhs) {
+                                            return lhs.seq() < rhs.seq();
+                                        });
+            if (hit == mHistory.end() || hit->seq() != msg.seq()) {
                 // new message, insert
-                mHistory.insert(it, msg);
+                mHistory.insert(hit, msg);
             }
         }
     }
@@ -136,9 +133,9 @@ void TopologyServer::PurgeDisconnected() {
         for (const auto& msg : mHistory) {
             if (!msg.has_node_change()) continue;
 
-            if (msg.node_change().op() == ipc_pubsub::JOIN) {
+            if (msg.node_change().op() == ips::JOIN) {
                 historicallyActive.emplace(msg.node_change().id());
-            } else if (msg.node_change().op() == ipc_pubsub::LEAVE) {
+            } else if (msg.node_change().op() == ips::LEAVE) {
                 historicallyActive.erase(msg.node_change().id());
             }
         }
@@ -178,3 +175,4 @@ TopologyServer::TopologyServer(std::string_view announcePath,
         PurgeDisconnected();
     });
 }
+}  // namespace ips

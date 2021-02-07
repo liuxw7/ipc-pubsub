@@ -7,14 +7,15 @@
 
 #include "protos/index.pb.h"
 
+namespace ips {
 class TopologyServer;
 class UDSServer;
 class UDSClient;
 
 class TopologyManager {
    public:
-    using NodeChangeHandler = std::function<void(const ipc_pubsub::NodeChange&)>;
-    using TopicChangeHandler = std::function<void(const ipc_pubsub::TopicChange&)>;
+    using NodeChangeHandler = std::function<void(const ips::NodeChange&)>;
+    using TopicChangeHandler = std::function<void(const ips::TopicChange&)>;
 
     TopologyManager(std::string_view groupName, std::string_view nodeName, uint64_t nodeId,
                     std::string_view dataPath, NodeChangeHandler onJoin = nullptr,
@@ -24,9 +25,9 @@ class TopologyManager {
 
     void Shutdown();
     ~TopologyManager();
-    void Apply(const ipc_pubsub::TopologyMessage& msg);
-    ipc_pubsub::TopologyMessage GetNodeMessage(uint64_t nodeId);
-    ipc_pubsub::TopologyMessage GetClientDescriptionMessage(int fd);
+    void Apply(const ips::TopologyMessage& msg);
+    ips::TopologyMessage GetNodeMessage(uint64_t nodeId);
+    ips::TopologyMessage GetClientDescriptionMessage(int fd);
     void Announce(std::string_view topic, std::string_view mime);
     void Retract(std::string_view topic);
     void Subscribe(std::string_view topic);
@@ -48,7 +49,7 @@ class TopologyManager {
     void MainLoop();
     void SetNewClient(std::shared_ptr<UDSClient>);
     std::shared_ptr<UDSClient> CreateClient();
-    void ApplyUpdate(const ipc_pubsub::TopologyMessage& msg);
+    void ApplyUpdate(const ips::TopologyMessage& msg);
     void ApplyUpdate(uint64_t len, uint8_t* data);
     void IntroduceOurselves(std::shared_ptr<UDSClient>);
 
@@ -58,7 +59,7 @@ class TopologyManager {
     // Clients are probably free to prune immediately
     std::mutex mMtx;
     std::atomic_bool mShutdown = false;
-    std::vector<ipc_pubsub::TopologyMessage> mHistory;
+    std::vector<ips::TopologyMessage> mHistory;
 
     const uint64_t mNodeId;
     const std::string mAnnouncePath;
@@ -78,3 +79,4 @@ class TopologyManager {
     const TopicChangeHandler mOnSubscribe;
     const TopicChangeHandler mOnUnsubscribe;
 };
+}  // namespace ips

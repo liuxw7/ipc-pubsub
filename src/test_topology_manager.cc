@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 #include <spdlog/spdlog.h>
 
-#include "TopologyManager.h"
-#include "Utils.h"
+#include "ips/TopologyManager.h"
+#include "ips/Utils.h"
+
+using namespace ips;
 
 // TEST(TopologyManager, SingleClient) {
 //    std::string group = GenRandom(8);
@@ -13,10 +15,10 @@
 //    uint64_t joinCount = 0;
 //    uint64_t leaveCount = 0;
 //    {
-//        auto onJoin = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) {
+//        auto onJoin = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) {
 //            joinCount++;
 //        };
-//        auto onLeave = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) {
+//        auto onLeave = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) {
 //            leaveCount++;
 //        };
 //
@@ -42,8 +44,8 @@ TEST(TopologyManager, ClientEntersAndLeaves) {
 
     uint64_t joinCount = 0;
     uint64_t leaveCount = 0;
-    auto onJoin = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) { joinCount++; };
-    auto onLeave = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) { leaveCount++; };
+    auto onJoin = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) { joinCount++; };
+    auto onLeave = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) { leaveCount++; };
 
     auto mgr1 =
         std::make_shared<TopologyManager>(group, nodeName1, nodeId1, nodeData1, onJoin, onLeave);
@@ -79,8 +81,8 @@ TEST(TopologyManager, MiddleNodeShouldStillGetAllNodes) {
 
     uint64_t joinCount = 0;
     uint64_t leaveCount = 0;
-    auto onJoin = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) { joinCount++; };
-    auto onLeave = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) { leaveCount++; };
+    auto onJoin = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) { joinCount++; };
+    auto onLeave = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) { leaveCount++; };
 
     auto mgr1 = std::make_shared<TopologyManager>(group, nodeName1, nodeId1, nodeData1);
     auto mgr2 =
@@ -116,10 +118,10 @@ TEST(TopologyManager, MiddleNodeShouldStillGetAllNodes) {
 //    uint64_t joinCount = 0;
 //    uint64_t leaveCount = 0;
 //    {
-//        auto onJoin = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) {
+//        auto onJoin = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) {
 //            joinCount++;
 //        };
-//        auto onLeave = [&]([[maybe_unused]] const ipc_pubsub::NodeChange& nodeChange) {
+//        auto onLeave = [&]([[maybe_unused]] const ips::NodeChange& nodeChange) {
 //            leaveCount++;
 //        };
 //

@@ -5,6 +5,7 @@
 #include <thread>
 #include <unordered_set>
 
+namespace ips {
 class UDSServer {
    public:
     using ConnHandler = std::function<void(int)>;
@@ -34,3 +35,4 @@ class UDSServer {
     const DataHandler mOnData;
     std::thread mMainThread;
 };
+}  // namespace ips

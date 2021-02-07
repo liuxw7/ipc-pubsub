@@ -1,11 +1,12 @@
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
-#include "TopologyManager.h"
-#include "Utils.h"
+#include "ips/TopologyManager.h"
+#include "ips/Utils.h"
 
-using ipc_pubsub::NodeChange;
-using ipc_pubsub::TopicChange;
+using ips::NodeChange;
+using ips::TopicChange;
+using ips::TopologyManager;
 int main() {
     auto onJoin = [](const NodeChange& msg) { spdlog::info("{}", msg.DebugString()); };
     auto onLeave = [](const NodeChange& msg) { spdlog::info("{}", msg.DebugString()); };

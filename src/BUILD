@@ -30,20 +30,12 @@ cc_binary(
     srcs = ["unix_dgram_writer.cc"],
 )
 
-#cc_library(
-#    name = "TopologyStore",
-#    srcs = ["TopologyStore.cc"],
-#    hdrs = ["TopologyStore.h"],
-#    deps = [
-#        "//protos:index_cc_proto",
-#        "@com_github_gabime_spdlog//:spdlog",
-#    ],
-#)
-
 cc_library(
     name = "TopologyServer",
     srcs = ["TopologyServer.cc"],
     hdrs = ["TopologyServer.h"],
+    include_prefix = "ips",
+    includes = ["."],
     deps = [
         ":UDSServer",
         ":Utils",
@@ -53,9 +45,20 @@ cc_library(
 )
 
 cc_library(
+    name = "IPCNode",
+    srcs = ["IPCNode.cc"],
+    hdrs = ["IPCNode.h"],
+    include_prefix = "ips",
+    includes = ["."],
+    deps = [":TopologyManager"],
+)
+
+cc_library(
     name = "TopologyManager",
     srcs = ["TopologyManager.cc"],
     hdrs = ["TopologyManager.h"],
+    include_prefix = "ips",
+    includes = ["."],
     deps = [
         ":TopologyServer",
         ":UDSClient",
@@ -69,6 +72,8 @@ cc_library(
     name = "UDSClient",
     srcs = ["UDSClient.cc"],
     hdrs = ["UDSClient.h"],
+    include_prefix = "ips",
+    includes = ["."],
     deps = [
         ":Utils",
         "@com_github_gabime_spdlog//:spdlog",
@@ -79,6 +84,8 @@ cc_library(
     name = "UDSServer",
     srcs = ["UDSServer.cc"],
     hdrs = ["UDSServer.h"],
+    include_prefix = "ips",
+    includes = ["."],
     deps = [
         ":Utils",
         "@com_github_gabime_spdlog//:spdlog",
@@ -89,4 +96,6 @@ cc_library(
     name = "Utils",
     srcs = ["Utils.cc"],
     hdrs = ["Utils.h"],
+    include_prefix = "ips",
+    includes = ["."],
 )

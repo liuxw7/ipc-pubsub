@@ -1,4 +1,4 @@
-#include "TopologyManager.h"
+#include "ips/TopologyManager.h"
 
 #include <spdlog/spdlog.h>
 #include <stdio.h>
@@ -16,13 +16,11 @@
 #include <string>
 #include <thread>
 
-#include "TopologyServer.h"
-#include "UDSClient.h"
+#include "ips/TopologyServer.h"
+#include "ips/UDSClient.h"
 #include "protos/index.pb.h"
 
-using ipc_pubsub::NodeOperation;
-using ipc_pubsub::TopicOperation;
-using ipc_pubsub::TopologyMessage;
+namespace ips {
 
 // Managers a set of unix domain socket servers and clients.
 TopologyManager::TopologyManager(std::string_view groupName, std::string_view nodeName,
@@ -70,15 +68,14 @@ void TopologyManager::ApplyUpdate(size_t len, uint8_t* data) {
 void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
     std::unique_lock<std::mutex> lk(mMtx);
 
-    auto it = std::lower_bound(mHistory.begin(), mHistory.end(), msg,
-                               [](const TopologyMessage& lhs, const TopologyMessage& rhs) {
-                                   return lhs.seq() < rhs.seq();
-                               });
-    mHistory.insert(it, msg);
+    auto seqComp = [](const TopologyMessage& lhs, const TopologyMessage& rhs) {
+        return lhs.seq() < rhs.seq();
+    };
+    mHistory.insert(std::lower_bound(mHistory.begin(), mHistory.end(), msg, seqComp), msg);
 
     if (msg.has_node_change()) {
         const auto& nodeChange = msg.node_change();
-        if (nodeChange.op() == ipc_pubsub::JOIN) {
+        if (nodeChange.op() == ips::JOIN) {
             auto [it, inserted] = mNodes.emplace(nodeChange.id(), Node{});
             if (inserted) {
                 it->second.id = nodeChange.id();
@@ -94,7 +91,7 @@ void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
                     if (mOnJoin) mOnJoin(nodeChange);
                 }
             }
-        } else if (nodeChange.op() == ipc_pubsub::LEAVE) {
+        } else if (nodeChange.op() == ips::LEAVE) {
             auto it = mNodes.find(nodeChange.id());
             if (it != mNodes.end()) {
                 mNodes.erase(it);
@@ -109,7 +106,7 @@ void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
                          topicChange.node_id());
             return;
         }
-        if (topicChange.op() == ipc_pubsub::ANNOUNCE) {
+        if (topicChange.op() == ips::ANNOUNCE) {
             auto [tit, topicInserted] = nit->second.publications.emplace(
                 topicChange.name(),
                 Publication{.name = topicChange.name(), .mime = topicChange.mime()});
@@ -119,17 +116,17 @@ void TopologyManager::ApplyUpdate(const TopologyMessage& msg) {
                 tit->second.mime = topicChange.mime();
                 mOnAnnounce(topicChange);
             }
-        } else if (topicChange.op() == ipc_pubsub::SUBSCRIBE) {
+        } else if (topicChange.op() == ips::SUBSCRIBE) {
             auto [tit, topicInserted] = nit->second.subscriptions.emplace(topicChange.name());
             if (topicInserted && mOnSubscribe) {
                 mOnSubscribe(topicChange);
             }
-        } else if (topicChange.op() == ipc_pubsub::UNSUBSCRIBE) {
+        } else if (topicChange.op() == ips::UNSUBSCRIBE) {
             size_t numErased = nit->second.subscriptions.erase(topicChange.name());
             if (numErased > 0 && mOnUnsubscribe) {
                 mOnUnsubscribe(topicChange);
             }
-        } else if (topicChange.op() == ipc_pubsub::RETRACT) {
+        } else if (topicChange.op() == ips::RETRACT) {
             size_t numErased = nit->second.publications.erase(topicChange.name());
             if (numErased > 0 && mOnRetract) {
                 mOnRetract(topicChange);
@@ -166,14 +163,14 @@ void TopologyManager::IntroduceOurselves(std::shared_ptr<UDSClient> client) {
             topicMsg->set_name(pub.name);
             topicMsg->set_mime(pub.mime);
             topicMsg->set_node_id(mNodeId);
-            topicMsg->set_op(ipc_pubsub::ANNOUNCE);
+            topicMsg->set_op(ips::ANNOUNCE);
             client->Send(msg);
         }
         for (const auto& name : it->second.subscriptions) {
             auto topicMsg = msg.mutable_topic_change();
             topicMsg->set_name(name);
             topicMsg->set_node_id(mNodeId);
-            topicMsg->set_op(ipc_pubsub::SUBSCRIBE);
+            topicMsg->set_op(ips::SUBSCRIBE);
             client->Send(msg);
         }
     }
@@ -205,3 +202,4 @@ void TopologyManager::MainLoop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
+}  // namespace ips

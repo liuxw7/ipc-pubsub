@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package ipc_pubsub;
+package ips;
 
 // Storage for actual IPC messages, may contain inline data
 message MetadataMessage {

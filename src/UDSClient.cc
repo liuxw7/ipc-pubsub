@@ -1,4 +1,4 @@
-#include "UDSClient.h"
+#include "ips/UDSClient.h"
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
@@ -13,8 +13,8 @@
 #include <memory>
 #include <string_view>
 
-#include "Utils.h"
-
+#include "ips/Utils.h"
+namespace ips {
 std::shared_ptr<UDSClient> UDSClient::Create(std::string_view sockPath, OnDataCallback onData,
                                              std::function<void()> onDisconnect) {
     struct sockaddr_un addr;
@@ -173,3 +173,4 @@ int64_t UDSClient::Send(size_t len, uint8_t* message) {
     int64_t ret = send(mFd, message, len, MSG_EOR);
     return ret;
 }
+}  // namespace ips
