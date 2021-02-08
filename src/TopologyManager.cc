@@ -181,7 +181,7 @@ void TopologyManager::Announce(const std::string& topic, const std::string& mime
     msg->set_op(TopicOperation::ANNOUNCE);
     msg->set_name(topic);
     msg->set_mime(mime);
-    if (mClient) mClient->Send(outerMsg);
+    Send(outerMsg);
 }
 
 void TopologyManager::Retract(const std::string& topic) {
@@ -190,7 +190,7 @@ void TopologyManager::Retract(const std::string& topic) {
     msg->set_node_id(mNodeId);
     msg->set_op(TopicOperation::RETRACT);
     msg->set_name(topic);
-    if (mClient) mClient->Send(outerMsg);
+    Send(outerMsg);
 }
 
 void TopologyManager::Subscribe(const std::string& topic) {
@@ -199,7 +199,7 @@ void TopologyManager::Subscribe(const std::string& topic) {
     msg->set_node_id(mNodeId);
     msg->set_op(TopicOperation::SUBSCRIBE);
     msg->set_name(topic);
-    if (mClient) mClient->Send(outerMsg);
+    Send(outerMsg);
 }
 
 void TopologyManager::Unsubscribe(const std::string& topic) {
@@ -209,7 +209,23 @@ void TopologyManager::Unsubscribe(const std::string& topic) {
     msg->set_op(TopicOperation::UNSUBSCRIBE);
     msg->set_name(topic);
     std::lock_guard<std::mutex> lk(mMtx);
-    if (mClient) mClient->Send(outerMsg);
+    Send(outerMsg);
+}
+
+void TopologyManager::Send(const TopologyMessage& msg) {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mClient == nullptr) {
+        mBacklog.push_back(msg);
+        return;
+    }
+
+    int64_t ret = mClient->Send(msg);
+    if (ret < 0) {
+        SPDLOG_ERROR("Failed to send, destroying client");
+        mClient = nullptr;
+        mBacklog.push_back(msg);
+        return;
+    }
 }
 
 void TopologyManager::MainLoop() {
@@ -220,11 +236,21 @@ void TopologyManager::MainLoop() {
     while (!mShutdown) {
         // try to connect and wait before starting the server, if we fail to create the client then
         // we'll try to create the server, then go back to creating a client
-        mClient = UDSClient::Create(mAnnouncePath,
-                                    [this](size_t len, uint8_t* data) { ApplyUpdate(len, data); });
-        if (mClient != nullptr) {
+        auto client = UDSClient::Create(
+            mAnnouncePath, [this](size_t len, uint8_t* data) { ApplyUpdate(len, data); });
+        if (client != nullptr) {
             // we're connected send our history so that the server can integrate it
-            IntroduceOurselves(mClient);
+            IntroduceOurselves(client);
+
+            // clear backlog and update client
+            std::vector<TopologyMessage> backlog;
+            {
+                std::lock_guard<std::mutex> lk(mMtx);
+                mClient = client;
+                backlog = mBacklog;
+                mBacklog.clear();
+            }
+            for (const auto& msg : backlog) Send(msg);
 
             mClient->Wait();
             mClient = nullptr;

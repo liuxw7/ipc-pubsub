@@ -21,7 +21,7 @@ int main() {
         std::cout << " recvd" << std::endl;
     });
     node->Announce("/ping", "text/plain");
-    for (size_t i = 0; i < 2; ++i) {
+    for (size_t i = 0; i < 100; ++i) {
         std::string msg = "ping";
         node->Publish("/ping", msg.size() + 1, reinterpret_cast<const uint8_t*>(msg.c_str()));
         std::cout << "ping sent" << std::endl;

@@ -6,6 +6,9 @@
 
 #include "ips/TopologyManager.h"
 namespace ips {
+
+struct IPCNeighbor;
+
 class IPCNode {
    public:
     using RawCallback = std::function<void(int64_t len, uint8_t* data)>;
@@ -41,16 +44,8 @@ class IPCNode {
     //    };
     //
 
-    struct Node {
-        std::string name;
-        uint64_t id;
-        std::string address;
-
-        std::unordered_set<std::string> subscriptions;
-    };
-
     std::mutex mMtx;
-    std::unordered_map<uint64_t, Node> mNodeById;
+    std::unordered_map<uint64_t, std::unique_ptr<IPCNeighbor>> mNodeById;
 
     //    std::unordered_map<std::string, RawCallback> mSubscriptions;
     //

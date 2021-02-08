@@ -23,5 +23,5 @@ int main() {
         std::cout << " recvd" << std::endl;
         node->Publish("/pong", len, data);
     });
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    std::this_thread::sleep_for(std::chrono::seconds(100));
 }

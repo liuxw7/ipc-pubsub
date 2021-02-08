@@ -51,6 +51,7 @@ class TopologyManager {
     void ApplyUpdate(const ips::TopologyMessage& msg);
     void ApplyUpdate(uint64_t len, uint8_t* data);
     void IntroduceOurselves(std::shared_ptr<UDSClient>);
+    void Send(const ips::TopologyMessage& msg);
 
     // TODO server could prune nodes from history once they leave and everyone is
     // up-to-date, but the server would have to send a prune notification otherwise
@@ -59,6 +60,9 @@ class TopologyManager {
     std::mutex mMtx;
     std::atomic_bool mShutdown = false;
     std::vector<ips::TopologyMessage> mHistory;
+
+    // if for some reason we failed to send a message put the message here
+    std::vector<TopologyMessage> mBacklog;
 
     const uint64_t mNodeId;
     const std::string mAnnouncePath;

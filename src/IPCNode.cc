@@ -12,21 +12,42 @@
 #include <string>
 
 namespace ips {
+struct IPCNeighbor {
+    std::string name;
+    uint64_t id;
+    std::string path;
+
+    std::unordered_set<std::string> subscriptions;
+
+    struct sockaddr_un address;
+};
+
 void IPCNode::Publish(const std::string& topic, int64_t len, const uint8_t* data) {
-    thread_local std::vector<int> fds;
+    static thread_local MetadataMessage msg;
+    msg.mutable_topic()->assign(topic.begin(), topic.end());
+    msg.mutable_inlined()->assign(reinterpret_cast<const char*>(data), len);
+    static thread_local std::string blob;
+    msg.SerializeToString(&blob);
+
     std::scoped_lock<std::mutex> lk(mMtx);
 
     for (const auto& pair : mNodeById) {
-        const Node& node = pair.second;
-        if (node.subscriptions.count(topic) == 0) continue;
-        if (node.address.empty()) {
+        const IPCNeighbor& node = *pair.second;
+        if (node.subscriptions.count(topic) == 0) {
+            SPDLOG_INFO("Node {} has no subscriptions", node.id);
+            continue;
+        }
+        if (node.path.empty()) {
             SPDLOG_INFO("Node ({}) without reception address is subscribed to {}", node.id, topic);
             continue;
         }
 
-        ssize_t sent = sendto(mOutFd, reinterpret_cast<const char*>(data), len, 0,
-                              reinterpret_cast<const struct sockaddr*>(node.address.c_str()),
-                              sizeof(struct sockaddr_un)) < 0;
+        SPDLOG_INFO("Sending {} bytes to {}", len, node.path);
+        // NOTE: even though we tell it sizeof(sockaddr_un) it will stop at the
+        // first \0 that isn't the first character (it will obey c_str() ending)
+        ssize_t sent = sendto(mOutFd, reinterpret_cast<const char*>(blob.data()), blob.size(), 0,
+                              reinterpret_cast<const struct sockaddr*>(&node.address),
+                              sizeof(struct sockaddr_un));
         if (sent < 0) {
             perror("sending datagram message");
         }
@@ -54,15 +75,20 @@ void IPCNode::OnJoin(const ips::NodeChange& msg) {
 
     std::lock_guard<std::mutex> lk(mMtx);
 
-    auto [it, inserted] = mNodeById.emplace(msg.id(), Node{});
+    auto [it, inserted] = mNodeById.emplace(msg.id(), nullptr);
     if (!inserted) {
         // TODO sansity check?
-        return;
+        SPDLOG_INFO("Updating node: {}", msg.id());
+    } else {
+        it->second = std::make_unique<IPCNeighbor>();
     }
+    it->second->name = msg.name();
+    it->second->id = msg.id();
+    it->second->path = msg.address();
 
-    it->second.name = msg.name();
-    it->second.id = msg.id();
-    it->second.address = msg.address();
+    memset(&it->second->address, 0, sizeof(struct sockaddr_un));
+    it->second->address.sun_family = AF_UNIX;
+    std::copy(msg.address().begin(), msg.address().end(), it->second->address.sun_path);
 }
 
 void IPCNode::OnLeave(const ips::NodeChange& msg) {
@@ -84,16 +110,17 @@ void IPCNode::OnRetract(const ips::TopicChange& msg) {
 void IPCNode::OnSubscribe(const ips::TopicChange& msg) {
     SPDLOG_ERROR("{}", msg.DebugString());
     std::lock_guard<std::mutex> lk(mMtx);
-    auto [it, inserted] = mNodeById.emplace(msg.node_id(), Node());
+    auto [it, inserted] = mNodeById.emplace(msg.node_id(), nullptr);
     if (inserted) {
         SPDLOG_ERROR("Node: {} subscribed, but hasn't joined the topology");
 
         // go ahead and add it, but we won't be able to send anything to it
-        it->second.id = msg.node_id();
+        it->second = std::make_unique<IPCNeighbor>();
+        it->second->id = msg.node_id();
     }
 
     // need to record so we know where to send datagrams to
-    it->second.subscriptions.emplace(msg.name());
+    it->second->subscriptions.emplace(msg.name());
 }
 
 void IPCNode::OnUnsubscribe(const ips::TopicChange& msg) {
@@ -105,7 +132,7 @@ void IPCNode::OnUnsubscribe(const ips::TopicChange& msg) {
         return;
     }
 
-    it->second.subscriptions.erase(msg.name());
+    it->second->subscriptions.erase(msg.name());
 }
 
 std::shared_ptr<IPCNode> IPCNode::Create(const std::string& groupName,
@@ -168,7 +195,7 @@ IPCNode::IPCNode(int shutdownFd, int listenSock, int outSock, const std::string&
     auto onRetract = [this](const TopicChange& msg) { OnRetract(msg); };
     auto onSubscribe = [this](const TopicChange& msg) { OnSubscribe(msg); };
     auto onUnsubscribe = [this](const TopicChange& msg) { OnUnsubscribe(msg); };
-    auto topologyManager =
+    mTopologyManager =
         std::make_shared<TopologyManager>(groupName, nodeName, nodeId, dataPath, onJoin, onLeave,
                                           onAnnounce, onRetract, onSubscribe, onUnsubscribe);
 
