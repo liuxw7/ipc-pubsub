@@ -17,21 +17,20 @@ class TopologyManager {
     using NodeChangeHandler = std::function<void(const ips::NodeChange&)>;
     using TopicChangeHandler = std::function<void(const ips::TopicChange&)>;
 
-    TopologyManager(std::string_view groupName, std::string_view nodeName, uint64_t nodeId,
-                    std::string_view dataPath, NodeChangeHandler onJoin = nullptr,
+    TopologyManager(const std::string& groupName, const std::string& nodeName, uint64_t nodeId,
+                    const std::string& dataPath, NodeChangeHandler onJoin = nullptr,
                     NodeChangeHandler onLeave = nullptr, TopicChangeHandler onAnnounce = nullptr,
                     TopicChangeHandler onRecant = nullptr, TopicChangeHandler onSubscribe = nullptr,
                     TopicChangeHandler onUnsubscribe = nullptr);
 
-    void Shutdown();
     ~TopologyManager();
     void Apply(const ips::TopologyMessage& msg);
     ips::TopologyMessage GetNodeMessage(uint64_t nodeId);
     ips::TopologyMessage GetClientDescriptionMessage(int fd);
-    void Announce(std::string_view topic, std::string_view mime);
-    void Retract(std::string_view topic);
-    void Subscribe(std::string_view topic);
-    void Unsubscribe(std::string_view topic);
+    void Announce(const std::string& topic, const std::string& mime);
+    void Retract(const std::string& topic);
+    void Subscribe(const std::string& topic);
+    void Unsubscribe(const std::string& topic);
 
     struct Publication {
         std::string name;
@@ -70,6 +69,8 @@ class TopologyManager {
     std::unordered_map<uint64_t, Node> mNodes;
 
     std::thread mMainThread;
+
+    std::shared_ptr<UDSClient> mClient;
 
     // Callbacks
     const NodeChangeHandler mOnJoin;

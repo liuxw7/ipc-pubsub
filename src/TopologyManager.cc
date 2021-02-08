@@ -23,8 +23,8 @@
 namespace ips {
 
 // Managers a set of unix domain socket servers and clients.
-TopologyManager::TopologyManager(std::string_view groupName, std::string_view nodeName,
-                                 uint64_t nodeId, std::string_view dataPath,
+TopologyManager::TopologyManager(const std::string& groupName, const std::string& nodeName,
+                                 uint64_t nodeId, const std::string& dataPath,
                                  NodeChangeHandler onJoin, NodeChangeHandler onLeave,
                                  TopicChangeHandler onAnnounce, TopicChangeHandler onRetract,
                                  TopicChangeHandler onSubscribe, TopicChangeHandler onUnsubscribe)
@@ -48,13 +48,11 @@ TopologyManager::TopologyManager(std::string_view groupName, std::string_view no
     mMainThread = std::thread([this]() { MainLoop(); });
 }
 
-void TopologyManager::Shutdown() {
-    // Destroying the server and client should be sufficient to trigger their shutdown
-    mShutdown = true;
-}
-
 TopologyManager::~TopologyManager() {
-    Shutdown();
+    mShutdown = true;
+
+    // Destroying the client should be sufficient to trigger its shutdown
+    mClient = nullptr;
     mMainThread.join();
 }
 
@@ -176,6 +174,44 @@ void TopologyManager::IntroduceOurselves(std::shared_ptr<UDSClient> client) {
     }
 }
 
+void TopologyManager::Announce(const std::string& topic, const std::string& mime) {
+    TopologyMessage outerMsg;
+    auto msg = outerMsg.mutable_topic_change();
+    msg->set_node_id(mNodeId);
+    msg->set_op(TopicOperation::ANNOUNCE);
+    msg->set_name(topic);
+    msg->set_mime(mime);
+    if (mClient) mClient->Send(outerMsg);
+}
+
+void TopologyManager::Retract(const std::string& topic) {
+    TopologyMessage outerMsg;
+    auto msg = outerMsg.mutable_topic_change();
+    msg->set_node_id(mNodeId);
+    msg->set_op(TopicOperation::RETRACT);
+    msg->set_name(topic);
+    if (mClient) mClient->Send(outerMsg);
+}
+
+void TopologyManager::Subscribe(const std::string& topic) {
+    TopologyMessage outerMsg;
+    auto msg = outerMsg.mutable_topic_change();
+    msg->set_node_id(mNodeId);
+    msg->set_op(TopicOperation::SUBSCRIBE);
+    msg->set_name(topic);
+    if (mClient) mClient->Send(outerMsg);
+}
+
+void TopologyManager::Unsubscribe(const std::string& topic) {
+    TopologyMessage outerMsg;
+    auto msg = outerMsg.mutable_topic_change();
+    msg->set_node_id(mNodeId);
+    msg->set_op(TopicOperation::UNSUBSCRIBE);
+    msg->set_name(topic);
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mClient) mClient->Send(outerMsg);
+}
+
 void TopologyManager::MainLoop() {
     // not necessarily running, but one TopologyManager will create one and
     // if the client drops it will attempt to create a new server
@@ -184,14 +220,14 @@ void TopologyManager::MainLoop() {
     while (!mShutdown) {
         // try to connect and wait before starting the server, if we fail to create the client then
         // we'll try to create the server, then go back to creating a client
-        auto client = UDSClient::Create(
-            mAnnouncePath, [this](size_t len, uint8_t* data) { ApplyUpdate(len, data); });
-        if (client != nullptr) {
+        mClient = UDSClient::Create(mAnnouncePath,
+                                    [this](size_t len, uint8_t* data) { ApplyUpdate(len, data); });
+        if (mClient != nullptr) {
             // we're connected send our history so that the server can integrate it
-            IntroduceOurselves(client);
+            IntroduceOurselves(mClient);
 
-            client->Wait();
-            client = nullptr;
+            mClient->Wait();
+            mClient = nullptr;
         }
 
         if (mShutdown) break;

@@ -11,6 +11,24 @@ cc_test(
 )
 
 cc_binary(
+    name = "ponger",
+    srcs = ["ponger.cc"],
+    deps = [
+        ":IPCNode",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
+)
+
+cc_binary(
+    name = "pinger",
+    srcs = ["pinger.cc"],
+    deps = [
+        ":IPCNode",
+        "@com_github_gabime_spdlog//:spdlog",
+    ],
+)
+
+cc_binary(
     name = "topology_node",
     srcs = ["topology_node.cc"],
     deps = [
