@@ -97,15 +97,19 @@ bool Publisher::Send(const std::string& meta, size_t len, const uint8_t* data) {
 
     // unlink when we leave this function, since it will have been shared by
     // then or failed
-    OnReturn onRet([&name]() { shm_unlink(name.c_str()); });
+    OnReturn onRet1([&name, shmFdWrite]() {
+        shm_unlink(name.c_str());
+        close(shmFdWrite);
+    });
 
     if (ssize_t written = write(shmFdWrite, data, len); written != ssize_t(len)) {
         perror("Failed to write to shm");
         return false;
     }
 
-    // send read only version to other processes
+    // send read only version to other processes, close after we finish sending
     int shmFdSend = shm_open(name.c_str(), O_RDONLY, S_IRUSR);
+    OnReturn onRet2([shmFdSend]() { close(shmFdSend); });
 
     // Construct header
     struct msghdr msgh;
