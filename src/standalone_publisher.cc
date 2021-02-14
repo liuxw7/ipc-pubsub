@@ -1,4 +1,5 @@
-#include <fcntl.h>     // For O_* constants
+#include <fcntl.h>  // For O_* constants
+#include <string.h>
 #include <sys/mman.h>  // for shm_open
 #include <sys/socket.h>
 #include <sys/stat.h>  // For mode constants
@@ -114,19 +115,15 @@ bool Publisher::Send(const std::string& meta, size_t len, const uint8_t* data) {
     // Construct header
     struct msghdr msgh;
 
-    constexpr size_t BUFFLEN = 1 << 12;
-    char metadata[BUFFLEN];
-    if (meta.size() + 1 >= BUFFLEN) {
-        std::cerr << "Metadata is too large" << std::endl;
-        return false;
-    }
-    std::copy(meta.c_str(), meta.c_str() + 1 + meta.size(), metadata);
+    std::vector<char> metadata;
+    std::copy(meta.begin(), meta.end(), std::back_inserter(metadata));
+    metadata.push_back(0);
 
     // Vector of data to send, NOTE: we must always send at least one byte
     // This is the data that will be sent in the actual socket stream
     struct iovec iov;
-    iov.iov_base = metadata;
-    iov.iov_len = meta.size() + 1;
+    iov.iov_base = metadata.data();
+    iov.iov_len = metadata.size();
 
     // Don't need destination because we are using a connection
     msgh.msg_name = nullptr;
@@ -155,6 +152,9 @@ bool Publisher::Send(const std::string& meta, size_t len, const uint8_t* data) {
     cmsgp->cmsg_type = SCM_RIGHTS;
     memcpy(CMSG_DATA(cmsgp), &shmFdSend, sizeof(shmFdSend));
 
+    std::cerr << (char*)(msgh.msg_iov->iov_base) << std::endl;
+    std::cerr << strlen((char*)msgh.msg_iov->iov_base) << std::endl;
+    std::cerr << msgh.msg_iov[0].iov_len << std::endl;
     // Send
     for (const int client : mClients) {
         ssize_t ns = sendmsg(client, &msgh, 0);

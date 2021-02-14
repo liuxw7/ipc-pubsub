@@ -64,6 +64,7 @@ std::shared_ptr<Message> Message::Create(struct msghdr msgh) {
     }
 
     // construct metadata from first vector payload
+    std::cerr << msgh.msg_iov[0].iov_len << std::endl;
     std::string_view meta(reinterpret_cast<const char*>(msgh.msg_iov[0].iov_base),
                           msgh.msg_iov[0].iov_len);
 
