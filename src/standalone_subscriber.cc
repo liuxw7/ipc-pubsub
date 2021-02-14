@@ -14,7 +14,7 @@
 #include <thread>
 
 struct Message {
-    static std::shared_ptr<Message> Create(struct msghdr msgh);
+    static std::shared_ptr<Message> Create(size_t vecLen, struct msghdr msgh);
     Message(std::string_view meta, uint8_t* ptr, size_t len, int fd)
         : metaData(meta), blobPtr(ptr), blobSize(len), mFd(fd) {}
 
@@ -38,7 +38,7 @@ struct Message {
     int mFd = -1;
 };
 
-std::shared_ptr<Message> Message::Create(struct msghdr msgh) {
+std::shared_ptr<Message> Message::Create(size_t vecLen, struct msghdr msgh) {
     int recvFd;
     struct cmsghdr* cmsgp = CMSG_FIRSTHDR(&msgh);
     if (cmsgp == nullptr || cmsgp->cmsg_len != CMSG_LEN(sizeof(recvFd))) {
@@ -64,9 +64,7 @@ std::shared_ptr<Message> Message::Create(struct msghdr msgh) {
     }
 
     // construct metadata from first vector payload
-    std::cerr << msgh.msg_iov[0].iov_len << std::endl;
-    std::string_view meta(reinterpret_cast<const char*>(msgh.msg_iov[0].iov_base),
-                          msgh.msg_iov[0].iov_len);
+    std::string_view meta(reinterpret_cast<const char*>(msgh.msg_iov[0].iov_base), vecLen);
 
     /* The data area of the 'cmsghdr' is an 'int' (a file descriptor);
        copy that integer to a local variable. (The received file descriptor
@@ -166,7 +164,8 @@ Subscriber::Subscriber(std::function<void(std::shared_ptr<Message>)> callback)
                 return;
             }
 
-            auto msg = Message::Create(msgh);
+            std::cerr << ns << std::endl;
+            auto msg = Message::Create(ns, msgh);
             if (msg != nullptr) {
                 mCallback(msg);
             }
