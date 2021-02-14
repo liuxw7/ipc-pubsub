@@ -138,6 +138,27 @@ Subscriber::Subscriber(std::function<void(std::shared_ptr<Message>)> callback)
 
     mReadThread = std::thread([this]() {
         struct msghdr msgh;
+
+        msgh.msg_name = nullptr;  // doesn't matter because we are connected
+        msgh.msg_namelen = 0;
+
+        constexpr size_t BUFFLEN = 1 << 12;
+        char buffer[BUFFLEN];
+        struct iovec iov;
+        msgh.msg_iov = &iov;
+        msgh.msg_iovlen = 1;
+        iov.iov_base = buffer;
+        iov.iov_len = BUFFLEN;
+
+        int recvFd = -1;
+        union {
+            char buf[CMSG_SPACE(sizeof(recvFd))];
+            /* Space large enough to hold an 'int' */
+            struct cmsghdr align;
+        } controlMsg;
+        msgh.msg_control = controlMsg.buf;
+        msgh.msg_controllen = sizeof(controlMsg.buf);
+
         while (ssize_t ns = recvmsg(mFd, &msgh, 0)) {
             if (ns < 0) {
                 perror("Bad recv");
