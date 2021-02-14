@@ -8,10 +8,11 @@
 namespace ips {
 
 struct IPCNeighbor;
+struct IPCHandlers;
 
 class IPCNode {
    public:
-    using RawCallback = std::function<void(int64_t len, uint8_t* data)>;
+    using RawCallback = std::function<void(int64_t len, const uint8_t* data)>;
 
     static std::shared_ptr<IPCNode> Create(const std::string& groupName,
                                            const std::string& nodeName);
@@ -46,9 +47,8 @@ class IPCNode {
 
     std::mutex mMtx;
     std::unordered_map<uint64_t, std::unique_ptr<IPCNeighbor>> mNodeById;
+    std::unordered_map<std::string, std::unique_ptr<IPCHandlers>> mSubscriptions;
 
-    //    std::unordered_map<std::string, RawCallback> mSubscriptions;
-    //
     std::shared_ptr<TopologyManager> mTopologyManager;
 
     // Event for shutting down main thread

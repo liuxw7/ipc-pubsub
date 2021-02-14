@@ -29,19 +29,16 @@ void TopologyServer::OnConnect(int fd) {
     // new client, send complete state message including all
     // nodes that we have a connection to
     std::lock_guard<std::mutex> lk(mMtx);
-    SPDLOG_INFO("onConnect, sending digest");
+    SPDLOG_DEBUG("onConnect, sending digest");
     auto& client = mClients[fd];
     for (const auto& msg : mHistory) {
         bool sent = msg.SerializeToFileDescriptor(fd);
         if (!sent) {
             SPDLOG_ERROR("Failed to send topology");
         }
-        SPDLOG_ERROR("{} vs {}", msg.seq(), client.seq);
         assert(msg.seq() >= client.seq);
         client.seq = msg.seq();
     }
-
-    SPDLOG_INFO("sent");
 }
 
 void TopologyServer::Broadcast() {

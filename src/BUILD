@@ -117,3 +117,23 @@ cc_library(
     include_prefix = "ips",
     includes = ["."],
 )
+
+cc_binary(
+    name = "standalone_publisher",
+    srcs = ["standalone_publisher.cc"],
+    linkopts = [
+        "-pthread",
+        "-lpthread",
+        "-lrt",
+    ],
+)
+
+cc_binary(
+    name = "standalone_subscriber",
+    srcs = ["standalone_subscriber.cc"],
+    linkopts = [
+        "-pthread",
+        "-lpthread",
+        "-lrt",
+    ],
+)

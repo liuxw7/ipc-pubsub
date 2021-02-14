@@ -1,3 +1,5 @@
+#include <spdlog/spdlog.h>
+
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -10,18 +12,17 @@ int main() {
     if (node == nullptr) {
         return 1;
     }
+    node->Announce("/pong", "text/plain");
 
     // shouldn't receive our own messages
-    node->Subscribe("/pong", [](size_t len, const uint8_t* data) {
-        std::cout.write(reinterpret_cast<const char*>(data), len);
-        std::cout << "self pong recvd" << std::endl;
+    node->Subscribe("/pong", [](ssize_t len, const uint8_t* data) {
+        SPDLOG_INFO("Self Pong received, {}", data);
     });
 
-    node->Announce("/pong", "text/plain");
-    node->Subscribe("/ping", [&node](size_t len, const uint8_t* data) {
-        std::cout.write(reinterpret_cast<const char*>(data), len);
-        std::cout << " recvd" << std::endl;
+    node->Subscribe("/ping", [&node](ssize_t len, const uint8_t* data) {
+        SPDLOG_INFO("Ping received, {}", data);
         node->Publish("/pong", len, data);
     });
+
     std::this_thread::sleep_for(std::chrono::seconds(100));
 }

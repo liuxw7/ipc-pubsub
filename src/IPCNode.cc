@@ -12,6 +12,10 @@
 #include <string>
 
 namespace ips {
+struct IPCHandlers {
+    IPCNode::RawCallback rawCb;
+};
+
 struct IPCNeighbor {
     std::string name;
     uint64_t id;
@@ -42,7 +46,6 @@ void IPCNode::Publish(const std::string& topic, int64_t len, const uint8_t* data
             continue;
         }
 
-        SPDLOG_INFO("Sending {} bytes to {}", len, node.path);
         // NOTE: even though we tell it sizeof(sockaddr_un) it will stop at the
         // first \0 that isn't the first character (it will obey c_str() ending)
         ssize_t sent = sendto(mOutFd, reinterpret_cast<const char*>(blob.data()), blob.size(), 0,
@@ -59,9 +62,16 @@ void IPCNode::Unsubscribe(const std::string& topic) {
     mTopologyManager->Unsubscribe(topic);
 }
 
-void IPCNode::Subscribe(const std::string& topic, [[maybe_unused]] RawCallback cb) {
+void IPCNode::Subscribe(const std::string& topic, RawCallback cb) {
     // publish that we want the messages
     mTopologyManager->Subscribe(topic);
+
+    std::lock_guard<std::mutex> lk(mMtx);
+    auto [it, inserted] = mSubscriptions.emplace(topic, nullptr);
+    if (inserted) {
+        it->second = std::make_unique<IPCHandlers>();
+    }
+    it->second->rawCb = cb;
 }
 
 void IPCNode::Announce(const std::string& topic, const std::string& mime) {
@@ -209,11 +219,18 @@ void IPCNode::OnData(int64_t len, uint8_t* data) {
         return;
     }
 
-    SPDLOG_ERROR("{}", msg.DebugString());
-    //// TODO(micah) get data out of shared memory
-    // if (!msg.inlined.empty()) {
-    //    rawCb(msg.size(), msg.data());
-    //}
+    IPCHandlers handlers;
+    {
+        std::scoped_lock<std::mutex> lk(mMtx);
+        auto it = mSubscriptions.find(msg.topic());
+        if (it == mSubscriptions.end()) return;
+        handlers = *it->second;
+    }
+
+    if (!msg.inlined().empty()) {
+        handlers.rawCb(msg.inlined().size(),
+                       reinterpret_cast<const uint8_t*>(msg.inlined().data()));
+    }
 
     // RawCallback rawCb;
     // ProtoCallback protoCb;
@@ -259,7 +276,6 @@ int IPCNode::MainLoop() {
             } else if (fds[1].revents & POLLIN) {
                 // socket has data, read it
                 uint8_t buffer[UINT16_MAX];
-                SPDLOG_INFO("onData");
                 int64_t nBytes = read(mInputFd, buffer, UINT16_MAX);
                 if (nBytes < 0) {
                     SPDLOG_ERROR("Error reading: {}", strerror(errno));
