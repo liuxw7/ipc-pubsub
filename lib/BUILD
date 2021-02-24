@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_test(
     name = "test_topology_manager",
@@ -8,44 +8,6 @@ cc_test(
         ":Utils",
         "@gtest",
     ],
-)
-
-cc_binary(
-    name = "ponger",
-    srcs = ["ponger.cc"],
-    deps = [
-        ":IPCNode",
-        "@com_github_gabime_spdlog//:spdlog",
-    ],
-)
-
-cc_binary(
-    name = "pinger",
-    srcs = ["pinger.cc"],
-    deps = [
-        ":IPCNode",
-        "@com_github_gabime_spdlog//:spdlog",
-    ],
-)
-
-cc_binary(
-    name = "topology_node",
-    srcs = ["topology_node.cc"],
-    deps = [
-        ":TopologyManager",
-        ":Utils",
-        "@com_github_gabime_spdlog//:spdlog",
-    ],
-)
-
-cc_binary(
-    name = "unix_dgram_reader",
-    srcs = ["unix_dgram_reader.cc"],
-)
-
-cc_binary(
-    name = "unix_dgram_writer",
-    srcs = ["unix_dgram_writer.cc"],
 )
 
 cc_library(
@@ -68,6 +30,7 @@ cc_library(
     hdrs = ["IPCNode.h"],
     include_prefix = "ips",
     includes = ["."],
+    visibility = ["//visibility:public"],
     deps = [":TopologyManager"],
 )
 
@@ -77,6 +40,7 @@ cc_library(
     hdrs = ["TopologyManager.h"],
     include_prefix = "ips",
     includes = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         ":TopologyServer",
         ":UDSClient",
@@ -116,24 +80,5 @@ cc_library(
     hdrs = ["Utils.h"],
     include_prefix = "ips",
     includes = ["."],
-)
-
-cc_binary(
-    name = "standalone_publisher",
-    srcs = ["standalone_publisher.cc"],
-    linkopts = [
-        "-pthread",
-        "-lpthread",
-        "-lrt",
-    ],
-)
-
-cc_binary(
-    name = "standalone_subscriber",
-    srcs = ["standalone_subscriber.cc"],
-    linkopts = [
-        "-pthread",
-        "-lpthread",
-        "-lrt",
-    ],
+    visibility = ["//visibility:public"],
 )
