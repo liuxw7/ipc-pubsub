@@ -41,19 +41,14 @@ cc_binary(
 cc_binary(
     name = "standalone_publisher",
     srcs = ["standalone_publisher.cc"],
-    linkopts = [
-        "-pthread",
-        "-lpthread",
-        "-lrt",
-    ],
+    deps = ["//lib:Publisher"],
 )
 
 cc_binary(
     name = "standalone_subscriber",
     srcs = ["standalone_subscriber.cc"],
-    linkopts = [
-        "-pthread",
-        "-lpthread",
-        "-lrt",
+    deps = [
+        "//lib:IPCMessage",
+        "//lib:Subscriber",
     ],
 )

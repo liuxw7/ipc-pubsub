@@ -4,7 +4,7 @@
 #include <iostream>
 #include <thread>
 
-#include "ips/IPCNode.h"
+#include "ipc_pubsub/IPCNode.h"
 
 using namespace ips;
 int main() {

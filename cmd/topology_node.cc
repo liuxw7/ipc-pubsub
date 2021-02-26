@@ -1,8 +1,8 @@
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
-#include "ips/TopologyManager.h"
-#include "ips/Utils.h"
+#include "ipc_pubsub/TopologyManager.h"
+#include "ipc_pubsub/Utils.h"
 
 using ips::NodeChange;
 using ips::TopicChange;

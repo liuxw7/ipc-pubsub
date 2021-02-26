@@ -1,4 +1,4 @@
-#include "ips/TopologyManager.h"
+#include "ipc_pubsub/TopologyManager.h"
 
 #include <spdlog/spdlog.h>
 #include <stdio.h>
@@ -16,8 +16,8 @@
 #include <string>
 #include <thread>
 
-#include "ips/TopologyServer.h"
-#include "ips/UDSClient.h"
+#include "ipc_pubsub/TopologyServer.h"
+#include "ipc_pubsub/UDSClient.h"
 #include "protos/index.pb.h"
 
 namespace ips {

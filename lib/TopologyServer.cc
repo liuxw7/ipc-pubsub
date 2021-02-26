@@ -1,4 +1,4 @@
-#include "ips/TopologyServer.h"
+#include "ipc_pubsub/TopologyServer.h"
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
@@ -17,7 +17,7 @@
 #include <string>
 #include <thread>
 
-#include "ips/UDSServer.h"
+#include "ipc_pubsub/UDSServer.h"
 #include "protos/index.pb.h"
 namespace ips {
 

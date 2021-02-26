@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "ips/TopologyManager.h"
+#include "ipc_pubsub/TopologyManager.h"
 namespace ips {
 
 struct IPCNeighbor;

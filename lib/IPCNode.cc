@@ -1,4 +1,4 @@
-#include "ips/IPCNode.h"
+#include "ipc_pubsub/IPCNode.h"
 
 #include <poll.h>
 #include <spdlog/spdlog.h>
