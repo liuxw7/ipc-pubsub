@@ -39,6 +39,10 @@ message TopicChange {
 
   uint64 node_id = 3;
   TopicOperation op = 4;
+
+  // unix domain socket, only set for for ANNOUNCE operations
+  // when subscribing to a message connect to this socket
+  string socket = 5;
 };
 
 message TopologyMessage {
