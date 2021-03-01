@@ -142,8 +142,8 @@ void TopologyManager::IntroduceOurselves(std::shared_ptr<UDSClient> client) {
     }
 
     // craft messages about ourselves
-    // TODO(micah) this will result in duplicates in the history everywhere, purge unecessary
-    // messages on the server and notify the clients
+    // Its possible this will be a duplicate of something in our history, but
+    // its up to the server to handle that
     TopologyMessage msg;
     auto nodeMsg = msg.mutable_node_change();
     nodeMsg->set_id(mNodeId);
@@ -242,7 +242,8 @@ void TopologyManager::MainLoop() {
             // we're connected send our history so that the server can integrate it
             IntroduceOurselves(client);
 
-            // clear backlog and update client
+            // clear backlog (messages sent while the client was disconnected)
+            // and update client
             std::vector<TopologyMessage> backlog;
             {
                 std::lock_guard<std::mutex> lk(mMtx);

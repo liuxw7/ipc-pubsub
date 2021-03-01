@@ -51,7 +51,10 @@ message TopologyMessage {
   // value in the digest
   uint64 seq = 1;
 
-  oneof Op {
+  // Random UID to detect history conflicts
+  uint64 uid = 2;
+
+  oneof op {
     NodeChange node_change = 3;
     TopicChange topic_change = 4;
   };
